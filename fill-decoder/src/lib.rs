@@ -590,4 +590,102 @@ mod tests {
         assert_eq!(analysis.levels_consumed, 0);
         assert_eq!(analysis.total_lots_filled, 0);
     }
+
+    /// Tx sig: 3F35sV3LmhrtqRTUUMnEAiSdBf8e4pjrjb6h29xpU7ChYr3sTAhM1bYyPJozPNfHV5qe4BfTCc7HPD8WFNNjDrwD
+    const REAL_TX5_BASE64: &str = "AnAjV0b0u7heGiPJNLiygSyqeHvahqWK0nlzB3TMRxJJVLOX9wxc4nKLaa5aYUV9YcDIy3pvTPLkvtPAQrr8PgwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAIBBRHX6YjW56lQwn+O17i7jjcjzC1eF63s8vP6w8CsNV9uBMOAvIYcfaKJKbntsRZhkmE5z6xpVI3UbVOSlAkYpnljMbgl6izdcZKG3L7tA0dDY1cE9t0qQ3lgLZbIED0jQNsyi8boMOin2qmKB+86DcC5AmP6yoMNUdE878Dp/eeeej/ze4cazHXK6oSe4+/WDNxWVmKTxr2GfhW5j7S3Sx0OTEn8xSw6B4UnG4+WeCMjbgEvhnAFj0oscjRbCk1IVqVczzWPqhgjcygxn73Kari1DZmRrL5t33MJg3E89BnKvHuLntEEYI0LF0BkR8R+qu33k4W2mmtaihzBna5tNajvuEu3dNr1R3TS8gwOeHtFxlE+X1aRiLlCabfFf4Xu6dvCkhdM+2kiT54U4225DhuscXLXJ66a2pXi7fir1acrx91ZL55tRxnYTx7WNVa7qyePbVB8wqdAssrLg9oEF+/F8Yfsh9H3Rcs6AzhKJqae2gyi0aoPQeQkFjd+kf9bXTEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAACeTUjwGeOKmNaN8QhVjkQuAyPqrOdqWbR2vIsdN/sy4EedVb8jHAbu50xW7OaBUH/bGy3qP0jlECsc2iVrwTjwbd9uHXZaGT2cvhRs7reawctIXtX1s3kTqM9YV+/wCpcaE+wD9JyP4GcMx1Xto/W7wWXcZkMd7JG5h6mbCJ+I4GDQAFAu94AwANAAkDAAAAAAAAAAAPBQIAIBAMCZPxe2T0hK52/w9GAAoFHiIQEA8dDw4AAQIKBgcgHhAQIygAKRoIChscGxwcECMlIQ8nECEmABcgJQIZCBgDBAkWJBEMExUSFAIFABAgECIjH2q7ZPrMMcSvFANjnwIAAAAAD2CgAgAAAAAAAAAAAAAEAAAAeAAsAAAAGXYVagAAAAABAAAAAAAAAICWmAAAAAAAAQAAAHMHDQAAAAAAMgAAAAAAAADqJQADaAAmAQACLwAAECcCA5oQJwMEEAMCAAABCQwCAAsMAgAAAPEQAAAAAAAABCm/lQcqT78E33F1k+c4vMwhJygVwkcagNn59VWw1IQlAAUAKAIXFVEeco22aHXe6ued3Jm1CXy2P74xNcI96BRXmWGT5tpVBY6PjZOLA5KRjMJRwDIR3Tbag/HLEdZxTPfqLWdCCyd0nco65bHdIoy/BCcoLzADMiYs1fUEn7nGinHgFz2Y1Gr0z2SQYAtcxgTamGgKyJ2kcBgD3d9EAkne";
+
+    #[test]
+    fn test_unknown_later_swap_variant_does_not_poison_rfq_leg() {
+        let tx = decode_transaction_base64(REAL_TX5_BASE64).unwrap();
+        let fill_ix = tx
+            .message
+            .instructions
+            .iter()
+            .find(|ix| ix.fill.is_some())
+            .expect("should still find the embedded RFQ leg despite unknown step 3 variant");
+
+        let (fill, analysis) = fill_ix.fill.as_ref().unwrap();
+
+        assert_eq!(fill.taker_side, Side::Bid);
+        // route_in (44,000,003) × bps (9706) / 10_000 — the amount that
+        // actually flows into the RFQ leg, not the route's total input and
+        // not the ~188-billion the buggy generic scanner used to invent.
+        assert_eq!(fill.amount_in_atoms, 42_706_402);
+        assert_eq!(fill.params.tick_size_qpb, 1);
+        assert_eq!(fill.params.lot_size_base, 10_000_000);
+        assert_eq!(fill.params.levels.len(), 1);
+        assert_eq!(fill.params.levels[0].px_ticks, 853_875);
+        assert_eq!(fill.params.levels[0].qty_lots, 50);
+
+        // Matches the on-chain `Fill executed` log.
+        assert_eq!(analysis.amount_spent_atoms, 42_693_750);
+        assert_eq!(analysis.amount_out_atoms, 500_000_000);
+        assert_eq!(analysis.vwap_ticks, 853_875);
+        assert_eq!(analysis.levels_consumed, 1);
+        assert_eq!(analysis.total_lots_filled, 50);
+    }
+
+    /// Tx sig: 2p167rbza2AjoKXCMeA2SauuFYsaLK4RNy9sZD5DJpPD9KMhiT3BZM43TYPm6u22AgYLLiSBbM6W1YkwCxmoapH8
+    const REAL_TX6_BASE64: &str = "AlqMoKcVaT8PWWVIcc/4IKUPOW69+K+MkY2Uv6D7JlvDSUCanNL1hpXHyHpJMxkbodh+/kzjRnjVgRWe8Kz8yAsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAIBBg0GXGniedCvdfyCSnwJK0Ofs2JmBoQNlbtMERORE6wYC8OAvIYcfaKJKbntsRZhkmE5z6xpVI3UbVOSlAkYpnljXM81j6oYI3MoMZ+9ymq4tQ2Zkay+bd9zCYNxPPQZyrx7i57RBGCNCxdAZEfEfqrt95OFtpprWoocwZ2ubTWo745BueiehHmGANK0I7QeI6KB1PrgzpJYnnbwCocrdNFP9bH3ut15aIgB5AlyMk70KmcRATrjkYJUhy+FHSQVD5QOexMv32RdwGY100l7UhFIP6wbtEZJB8Sr4EhLbPWZvwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwZGb+UhFzL/7K26csOb57yM5bvF9xJrLEObOkAAAAAJ5NSPAZ44qY1o3xCFWORC4DI+qs52pZtHa8ix03+zLvzRPaBBVZATz0rroahO1wI61P8hqEdH/zsFqzD6ggfDBHnVW/IxwG7udMVuzmgVB/2xst6j9I5RArHNola8E48G3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqdFqDUwK/qLHqBCBpQbV9uEciXPAiwNtHiDbubxSu8YHBggABQLQcQUACAAJA3kQBwAAAAAABwIABQwCAAAA6RI10QAAAAALBQUAGgwHCZPxe2T0hK52/wtFAAUEGhgMDAsXCw0eAA8FBhAOGh0cGx8MDAoeABUGBBQWHRghGx8MDAoJAAEFBAIDGhgMDB8eABMFBBESGhggGx8MDAoZartk+swxxK8U+fQV0QAAAABvPeQRAAAAADIAAgAAAAQAAACXAHMSAAGXABAnAQR4ASwAAACMeRVqAAAAAAEAAAAAAAAAgJaYAAAAAAABAAAAnRENAAAAAAAyAAAAAAAAAAIDAASXAJsRAAQMAwUAAAEJBCm/lQcqT78E33F1k+c4vMwhJygVwkcagNn59VWw1IQlASUEACgCFzHdwSMw/1NhB0GAQ4JsVDmT9kfqH79wtmLGV4ArowmxA2ajaQVoaqRnZbUOH7fEvxv51OIjUNwzr2F9cdBp6WMK3CKAhTB7GSlRA+rv8QHy3UDLjSWiR7/tOMfA+EoPNrP1tz3kWPHSsN0YqYH6sKkDEhcUARM=";
+
+    #[test]
+    fn test_parallel_split_route_applies_bps_to_rfq_leg() {
+        let tx = decode_transaction_base64(REAL_TX6_BASE64).unwrap();
+        let fill_ix = tx
+            .message
+            .instructions
+            .iter()
+            .find(|ix| ix.fill.is_some())
+            .expect("should find embedded RFQ leg in 4-step parallel split");
+
+        let (fill, analysis) = fill_ix.fill.as_ref().unwrap();
+
+        assert_eq!(fill.taker_side, Side::Ask);
+        // route_in (3,507,877,113) × bps (770) / 10_000 = 270,106,537.
+        assert_eq!(fill.amount_in_atoms, 270_106_537);
+        assert_eq!(fill.params.tick_size_qpb, 1);
+        assert_eq!(fill.params.lot_size_base, 10_000_000);
+        assert_eq!(fill.params.levels.len(), 1);
+        assert_eq!(fill.params.levels[0].px_ticks, 856_477);
+        assert_eq!(fill.params.levels[0].qty_lots, 50);
+
+        // Matches the on-chain `Fill executed` log: 27 lots × 10M base atoms,
+        // 27 lots × 856,477 quote atoms.
+        assert_eq!(analysis.amount_spent_atoms, 270_000_000);
+        assert_eq!(analysis.amount_out_atoms, 23_124_879);
+        assert_eq!(analysis.vwap_ticks, 856_477);
+        assert_eq!(analysis.levels_consumed, 1);
+        assert_eq!(analysis.total_lots_filled, 27);
+    }
+
+    /// Tx sig: 58y3YPbpdeD6Py5VjjZt1NWvxvhgai9Tw2i4EZkFTiGWGWA6djY1w1pQPbqvP8z21sWN8qZKSo7pxEVs6K22Johp
+    const REAL_TX7_BASE64: &str = "As7wE/epjlX1pS0WGiEb91phmEM7qgPThY0WgbgT3iT5DPrG87Gpcxqmz/fZ2xQ4dv6/sFVChYrr0LIh3kGqUA8/pecuQWJ7iKWuqaOBcRyoIKoqA5uJlY+QImK4t2GeSaflDzctcft2c4IvLBlxpag17ZMWazMqz2JBGgd1SmoFgAIBBRDX6YjW56lQwn+O17i7jjcjzC1eF63s8vP6w8CsNV9uBMOAvIYcfaKJKbntsRZhkmE5z6xpVI3UbVOSlAkYpnljNaQ2AtK4l+IcRXn2ydERhF3PwkoQz4S+L5MCsM2x86oxuCXqLN1xkobcvu0DR0NjVwT23SpDeWAtlsgQPSNA20xJ/MUsOgeFJxuPlngjI24BL4ZwBY9KLHI0WwpNSFalXM81j6oYI3MoMZ+9ymq4tQ2Zkay+bd9zCYNxPPQZyryANBhCc5KMkz14UHkwZqhpHsA0BpmGCVHXQKwoAELYbXuLntEEYI0LF0BkR8R+qu33k4W2mmtaihzBna5tNajviPH/o6Lf5he9xONXMlGjIuP8roHlpFc5DmR1HACkZeKg80OHuuYEKqH5J9guy/ZYT5HW7JwaFFRk3GveYoXrV91ZL55tRxnYTx7WNVa7qyePbVB8wqdAssrLg9oEF+/FAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADBkZv5SEXMv/srbpyw5vnvIzlu8X3EmssQ5s6QAAAAAnk1I8BnjipjWjfEIVY5ELgMj6qznalm0dryLHTf7MuBHnVW/IxwG7udMVuzmgVB/2xst6j9I5RArHNola8E48G3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqXptQ8QgmAoVIMbdzGNCR+m9pOUpyXDcQ8wSdDENjksvBgwABQIo6AgADAAJAwAAAAAAAAAADgUDACIPCwmT8Xtk9ISudv8ORAAECiMgDw8OHw4kAAASCwQKExQPIw8gEBEmFQsWGBcZBAMADyIPIyUnACgaBAMeGx0PCRwCBg4NAAEDCgUHIiAPDyUhc7tk+swxxK8Um4r3AQAAAAA0K/cBAAAAAAAAAAAAAAMAAAB0AcoPAAOSAgAAAAtGFwAABAAAAAAoBEYXAAJ4ASwAAACBgRVqAAAAAAEAAAAAAAAAgJaYAAAAAAABAAAATQkNAAAAAAAyAAAAAAAAABAnAgMPAwMAAAEJCwIACAwCAAAAEQ8AAAAAAAAEKb+VBypPvwTfcXWT5zi8zCEnKBXCRxqA2fn1VbDUhCUABAAoAhc32dQnS2zFLlchy1ks/hE9pmWD17IjlWmWM7Bf6Ogq+QU+P4+GiwIfOVEeco22aHXe6ued3Jm1CXy2P74xNcI96BRXmWGT5tpVBY6PjZOLApGMeS0YM07Po4EiEOOV4Ah6w0iCKUuQPkq5T3mRQbXSWb0F7bWz7rECsOw=";
+
+    #[test]
+    fn test_mid_chain_rfq_with_unknown_earlier_variant() {
+        let tx = decode_transaction_base64(REAL_TX7_BASE64).unwrap();
+        let fill_ix = tx
+            .message
+            .instructions
+            .iter()
+            .find(|ix| ix.fill.is_some())
+            .expect("should find the embedded RFQ leg via byte-scan despite unknown variant 146");
+
+        let (fill, analysis) = fill_ix.fill.as_ref().unwrap();
+
+        assert_eq!(fill.taker_side, Side::Ask);
+        // Mid-chain leg — input only known at runtime, so we honestly return 0.
+        assert_eq!(fill.amount_in_atoms, 0);
+        assert_eq!(fill.params.tick_size_qpb, 1);
+        assert_eq!(fill.params.lot_size_base, 10_000_000);
+        assert_eq!(fill.params.levels.len(), 1);
+        assert_eq!(fill.params.levels[0].px_ticks, 854_349);
+        assert_eq!(fill.params.levels[0].qty_lots, 50);
+
+        // Zero amounts follow from amount_in=0 — sweep has nothing to consume.
+        assert_eq!(analysis.amount_spent_atoms, 0);
+        assert_eq!(analysis.amount_out_atoms, 0);
+        assert_eq!(analysis.levels_consumed, 0);
+        assert_eq!(analysis.total_lots_filled, 0);
+    }
 }
