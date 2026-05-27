@@ -526,21 +526,89 @@ pub fn route_mint_positions(disc: &[u8; 8]) -> Option<(usize, usize)> {
 }
 
 pub fn decode_jupiter_rfq_fill(data: &[u8]) -> Option<(FillExactInInstruction, FillAnalysis)> {
-    let (steps, in_amount, _) = parse_route_steps(data)?;
-    steps.iter().find_map(|(side, fill_data, input_idx, _)| {
-        // The route's `in_amount` is denominated in the route's source
-        // token and only flows directly into a step that consumes that
-        // source (input_index == 0). For mid-chain RFQ legs the actual
-        // amount is whatever the upstream step output at runtime, so
-        // there's no honest static value to fill in here.
-        let reliable_in = if *input_idx == 0 { in_amount } else { None };
-        try_decode_rfq_fill(side, fill_data, reliable_in)
-    })
+    if let Some((steps, in_amount, _)) = parse_route_steps(data) {
+        if let Some(result) = steps
+            .iter()
+            .find_map(|(side, fill_data, input_idx, _, bps)| {
+                let reliable_in = if *input_idx == 0 {
+                    in_amount.map(|r| apply_bps(r, *bps))
+                } else {
+                    None
+                };
+                try_decode_rfq_fill(side, fill_data, reliable_in)
+            })
+        {
+            return Some(result);
+        }
+        if !steps.is_empty() {
+            return None;
+        }
+    }
+    scan_via_tag_byte_full(data)
+}
+
+fn route_in_amount_from_header(data: &[u8]) -> Option<u64> {
+    let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
+    let offset = match disc {
+        ROUTE_V2 => 8,
+        SHARED_ACCOUNTS_ROUTE_V2 => 9,
+        _ => return None,
+    };
+    let bytes: [u8; 8] = data.get(offset..offset + 8)?.try_into().ok()?;
+    Some(u64::from_le_bytes(bytes))
+}
+
+fn apply_bps(route_in: u64, bps: u16) -> u64 {
+    ((route_in as u128) * (bps as u128) / 10_000) as u64
+}
+
+fn scan_via_tag_byte_full(data: &[u8]) -> Option<(FillExactInInstruction, FillAnalysis)> {
+    const JUPITER_RFQ_V2_TAG: u8 = 120;
+    let route_in_amount = route_in_amount_from_header(data);
+
+    for i in 0..data.len() {
+        if data[i] != JUPITER_RFQ_V2_TAG {
+            continue;
+        }
+        if i + 6 > data.len() {
+            break;
+        }
+        let side = data[i + 1];
+        if side > 1 {
+            continue;
+        }
+        let fill_data_len =
+            u32::from_le_bytes([data[i + 2], data[i + 3], data[i + 4], data[i + 5]]) as usize;
+        if !(16..=1024).contains(&fill_data_len) {
+            continue;
+        }
+        let fill_data_end = i + 6 + fill_data_len;
+        if fill_data_end + 4 > data.len() {
+            continue;
+        }
+        let fill_data = &data[i + 6..fill_data_end];
+        let jup_side = if side == 0 {
+            JupSide::Bid
+        } else {
+            JupSide::Ask
+        };
+        let bps = u16::from_le_bytes([data[fill_data_end], data[fill_data_end + 1]]);
+        let input_idx = data[fill_data_end + 2];
+        let reliable_in = if input_idx == 0 {
+            route_in_amount.map(|r| apply_bps(r, bps))
+        } else {
+            None
+        };
+        if let Some(result) = try_decode_rfq_fill(&jup_side, fill_data, reliable_in) {
+            return Some(result);
+        }
+    }
+    None
 }
 
 pub fn decode_jupiter_rfq_step_indices(data: &[u8]) -> Option<JupiterRfqStepInfo> {
     if let Some((steps, _, total)) = parse_route_steps(data) {
-        if let Some((_, _, in_idx, out_idx)) = steps.first() {
+        if let Some((_, _, in_idx, out_idx, _)) = steps.first() {
             return Some(JupiterRfqStepInfo {
                 input_index: *in_idx,
                 output_index: *out_idx,
@@ -557,7 +625,9 @@ pub fn decode_jupiter_rfq_step_indices(data: &[u8]) -> Option<JupiterRfqStepInfo
     })
 }
 
-fn parse_route_steps(data: &[u8]) -> Option<(Vec<(JupSide, Vec<u8>, u8, u8)>, Option<u64>, u32)> {
+fn parse_route_steps(
+    data: &[u8],
+) -> Option<(Vec<(JupSide, Vec<u8>, u8, u8, u16)>, Option<u64>, u32)> {
     let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
     let args = &data[8..];
     Some(match disc {
@@ -743,7 +813,7 @@ fn scan_via_tag_byte(data: &[u8]) -> Option<(u8, u8)> {
     None
 }
 
-fn extract_rfq_steps_v1(plan: &[RoutePlanStep]) -> Vec<(JupSide, Vec<u8>, u8, u8)> {
+fn extract_rfq_steps_v1(plan: &[RoutePlanStep]) -> Vec<(JupSide, Vec<u8>, u8, u8, u16)> {
     plan.iter()
         .filter_map(|step| match &step.swap {
             Swap::JupiterRfqV2 { side, fill_data } => Some((
@@ -751,13 +821,14 @@ fn extract_rfq_steps_v1(plan: &[RoutePlanStep]) -> Vec<(JupSide, Vec<u8>, u8, u8
                 fill_data.clone(),
                 step.input_index,
                 step.output_index,
+                (step.percent as u16).saturating_mul(100),
             )),
             _ => None,
         })
         .collect()
 }
 
-fn extract_rfq_steps_v2(plan: &[RoutePlanStepV2]) -> Vec<(JupSide, Vec<u8>, u8, u8)> {
+fn extract_rfq_steps_v2(plan: &[RoutePlanStepV2]) -> Vec<(JupSide, Vec<u8>, u8, u8, u16)> {
     plan.iter()
         .filter_map(|step| match &step.swap {
             Swap::JupiterRfqV2 { side, fill_data } => Some((
@@ -765,6 +836,7 @@ fn extract_rfq_steps_v2(plan: &[RoutePlanStepV2]) -> Vec<(JupSide, Vec<u8>, u8, 
                 fill_data.clone(),
                 step.input_index,
                 step.output_index,
+                step.bps,
             )),
             _ => None,
         })
@@ -778,9 +850,6 @@ fn to_rfq_side(side: &JupSide) -> Side {
     }
 }
 
-// Three observed fill_data layouts: full instruction, disc + instruction,
-// or params-only. The levels_consumed guard rejects noise that happens to
-// borsh-deserialise.
 fn try_decode_rfq_fill(
     jup_side: &JupSide,
     fill_data: &[u8],
