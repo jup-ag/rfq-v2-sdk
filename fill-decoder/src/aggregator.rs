@@ -625,6 +625,31 @@ pub fn decode_jupiter_rfq_step_indices(data: &[u8]) -> Option<JupiterRfqStepInfo
     })
 }
 
+pub fn extract_platform_fee_bps(data: &[u8]) -> Option<u16> {
+    let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
+    let args = &data[8..];
+    let bps = match disc {
+        ROUTE => deser::<RouteArgs>(args)?.platform_fee_bps as u16,
+        ROUTE_WITH_TOKEN_LEDGER => deser::<RouteWithTokenLedgerArgs>(args)?.platform_fee_bps as u16,
+        EXACT_OUT_ROUTE => deser::<ExactOutRouteArgs>(args)?.platform_fee_bps as u16,
+        SHARED_ACCOUNTS_ROUTE => deser::<SharedAccountsRouteArgs>(args)?.platform_fee_bps as u16,
+        SHARED_ACCOUNTS_EXACT_OUT_ROUTE => {
+            deser::<SharedAccountsExactOutRouteArgs>(args)?.platform_fee_bps as u16
+        }
+        SHARED_ACCOUNTS_ROUTE_WITH_TOKEN_LEDGER => {
+            deser::<SharedAccountsRouteWithTokenLedgerArgs>(args)?.platform_fee_bps as u16
+        }
+        ROUTE_V2 => deser::<RouteV2Args>(args)?.platform_fee_bps,
+        EXACT_OUT_ROUTE_V2 => deser::<ExactOutRouteV2Args>(args)?.platform_fee_bps,
+        SHARED_ACCOUNTS_ROUTE_V2 => deser::<SharedAccountsRouteV2Args>(args)?.platform_fee_bps,
+        SHARED_ACCOUNTS_EXACT_OUT_ROUTE_V2 => {
+            deser::<SharedAccountsExactOutRouteV2Args>(args)?.platform_fee_bps
+        }
+        _ => return None,
+    };
+    Some(bps)
+}
+
 fn parse_route_steps(
     data: &[u8],
 ) -> Option<(Vec<(JupSide, Vec<u8>, u8, u8, u16)>, Option<u64>, u32)> {

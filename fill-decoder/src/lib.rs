@@ -27,8 +27,8 @@ pub use analysis::analyze_fill;
 pub use scanner::scan_for_embedded_fill;
 
 pub use aggregator::{
-    decode_jupiter_rfq_fill, decode_jupiter_rfq_step_indices, route_mint_positions,
-    JupiterRfqStepInfo, AGGREGATOR_IDL_JSON, JUPITER_PROGRAM_ID,
+    decode_jupiter_rfq_fill, decode_jupiter_rfq_step_indices, extract_platform_fee_bps,
+    route_mint_positions, JupiterRfqStepInfo, AGGREGATOR_IDL_JSON, JUPITER_PROGRAM_ID,
 };
 
 /// The Anchor IDL for the RFQ v2 program, embedded at compile time.
@@ -687,5 +687,70 @@ mod tests {
         assert_eq!(analysis.amount_out_atoms, 0);
         assert_eq!(analysis.levels_consumed, 0);
         assert_eq!(analysis.total_lots_filled, 0);
+    }
+
+    // ---- platform_fee_bps extraction ----
+
+    const ROUTE_DISC: [u8; 8] = [229, 23, 203, 151, 122, 227, 173, 42];
+    const SHARED_ACCOUNTS_ROUTE_V2_DISC: [u8; 8] = [209, 152, 83, 147, 124, 254, 216, 233];
+    const ROUTE_V2_DISC: [u8; 8] = [187, 100, 250, 204, 49, 196, 175, 20];
+
+    #[test]
+    fn test_extract_platform_fee_v1_ignores_trailing() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&ROUTE_DISC);
+        // route_plan: Vec<RoutePlanStep> with one Saber (unit variant, tag 0) step
+        data.extend_from_slice(&1u32.to_le_bytes()); // route_plan len
+        data.push(0); // Swap::Saber
+        data.push(100); // percent
+        data.push(0); // input_index
+        data.push(1); // output_index
+        data.extend_from_slice(&1_000_000u64.to_le_bytes()); // in_amount
+        data.extend_from_slice(&990_000u64.to_le_bytes()); // quoted_out_amount
+        data.extend_from_slice(&50u16.to_le_bytes()); // slippage_bps
+        data.push(25); // platform_fee_bps (u8) — the value we want
+                       // trailing RemainingAccountsInfo: one slice {accounts_type, length}
+        data.extend_from_slice(&1u32.to_le_bytes()); // slices len
+        data.push(7); // accounts_type
+        data.push(3); // length — ends up as the final byte
+
+        assert_eq!(extract_platform_fee_bps(&data), Some(25));
+        // The old heuristic returned the last byte (3), proving the bug.
+        assert_eq!(*data.last().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_extract_platform_fee_route_v2() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&ROUTE_V2_DISC);
+        data.extend_from_slice(&2_000_000u64.to_le_bytes()); // in_amount
+        data.extend_from_slice(&1_980_000u64.to_le_bytes()); // quoted_out_amount
+        data.extend_from_slice(&50u16.to_le_bytes()); // slippage_bps
+        data.extend_from_slice(&30u16.to_le_bytes()); // platform_fee_bps (u16)
+        data.extend_from_slice(&0u16.to_le_bytes()); // positive_slippage_bps
+        data.extend_from_slice(&0u32.to_le_bytes()); // route_plan len = 0
+
+        assert_eq!(extract_platform_fee_bps(&data), Some(30));
+    }
+
+    #[test]
+    fn test_extract_platform_fee_shared_v2() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&SHARED_ACCOUNTS_ROUTE_V2_DISC);
+        data.push(1); // id
+        data.extend_from_slice(&2_000_000u64.to_le_bytes()); // in_amount
+        data.extend_from_slice(&1_980_000u64.to_le_bytes()); // quoted_out_amount
+        data.extend_from_slice(&50u16.to_le_bytes()); // slippage_bps
+        data.extend_from_slice(&30u16.to_le_bytes()); // platform_fee_bps (u16)
+        data.extend_from_slice(&0u16.to_le_bytes()); // positive_slippage_bps
+        data.extend_from_slice(&0u32.to_le_bytes()); // route_plan len = 0
+
+        assert_eq!(extract_platform_fee_bps(&data), Some(30));
+    }
+
+    #[test]
+    fn test_extract_platform_fee_non_route() {
+        assert_eq!(extract_platform_fee_bps(&[0u8; 8]), None); // unknown disc
+        assert_eq!(extract_platform_fee_bps(&[1, 2, 3]), None); // too short
     }
 }
