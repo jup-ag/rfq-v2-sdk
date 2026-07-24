@@ -168,8 +168,10 @@ pub trait MarketMakerQuoteExt {
 
 impl MarketMakerQuoteExt for MarketMakerQuote {
     fn is_expired(&self) -> bool {
+        // `timestamp` is in microseconds; `quote_expiry_time` is a duration in seconds.
         let now = Utc::now().timestamp_micros() as u64;
-        now > self.timestamp + self.quote_expiry_time
+        let expiry_micros = self.quote_expiry_time.saturating_mul(1_000_000);
+        now > self.timestamp.saturating_add(expiry_micros)
     }
 
     fn best_bid(&self) -> Option<&PriceLevel> {

@@ -34,7 +34,7 @@ message MarketMakerQuote {
     // Infrastructure fields
     required uint64 timestamp = 1;           // Unix timestamp in microseconds
     required uint64 sequence_number = 2;     // Monotonic sequence per MM
-    required uint64 quote_expiry_time = 3;   // Quote validity duration
+    required uint64 quote_expiry_time = 3;   // Quote validity duration in seconds (server minimum 10s)
     required string maker_id = 4;            // Market maker identification
     required string maker_address = 5;       // Maker address
     required uint64 lot_size_base = 6;

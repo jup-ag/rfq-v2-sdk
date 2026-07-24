@@ -72,3 +72,7 @@ path = "examples/reflection_cli.rs"
 [[example]]
 name = "deploy_spl_token"
 path = "examples/deploy_spl_token.rs"
+
+[[example]]
+name = "maker_safety"
+path = "examples/maker_safety.rs"

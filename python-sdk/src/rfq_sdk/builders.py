@@ -20,8 +20,8 @@ from protos.market_maker_pb2 import (
 from .error import ValidationError
 from .types import TokenPairHelper
 
-# 30 seconds in microseconds — matches the Rust default
-DEFAULT_QUOTE_EXPIRY_MICROS: int = 30_000_000
+# Default quote validity duration, in seconds — matches the Rust default.
+DEFAULT_QUOTE_EXPIRY_SECS: int = 30
 
 
 class MarketMakerQuoteBuilder:
@@ -38,7 +38,7 @@ class MarketMakerQuoteBuilder:
         self._token_pair: Optional[TokenPair] = None
         self._bid_levels: List[PriceLevel] = []
         self._ask_levels: List[PriceLevel] = []
-        self._quote_expiry_time: int = DEFAULT_QUOTE_EXPIRY_MICROS
+        self._quote_expiry_time: int = DEFAULT_QUOTE_EXPIRY_SECS
         self._timestamp: Optional[int] = None
         self._sequence_number: Optional[int] = None
         self._maker_address: Optional[str] = None
@@ -119,20 +119,8 @@ class MarketMakerQuoteBuilder:
         self._ask_levels.extend(levels)
         return self
 
-    def expiry_time_micros(self, micros: int) -> "MarketMakerQuoteBuilder":
-        """Set quote expiry time in microseconds."""
-        self._quote_expiry_time = micros
-        return self
-
     def expiry_time_secs(self, secs: int) -> "MarketMakerQuoteBuilder":
-        """Set quote expiry time in seconds.
-
-        .. note::
-           To match the Rust SDK's behaviour exactly, this setter writes the
-           given value verbatim to the underlying field (which the proto
-           documents as microseconds). Use :meth:`expiry_time_micros` if you
-           want explicit unit conversion.
-        """
+        """Set the quote validity duration, in **seconds** (server minimum is 10s)."""
         self._quote_expiry_time = secs
         return self
 
@@ -214,7 +202,7 @@ def market_maker_quote_builder() -> MarketMakerQuoteBuilder:
 
 
 __all__ = [
-    "DEFAULT_QUOTE_EXPIRY_MICROS",
+    "DEFAULT_QUOTE_EXPIRY_SECS",
     "MarketMakerQuoteBuilder",
     "QuoteBuilder",
     "market_maker_quote_builder",
