@@ -177,8 +177,9 @@ class QuoteHelper:
     @staticmethod
     def is_expired(quote: MarketMakerQuote) -> bool:
         """Check if the quote has expired (current time vs. timestamp + expiry)."""
+        # `timestamp` is in microseconds; `quote_expiry_time` is a duration in seconds.
         now_micros = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
-        return now_micros > quote.timestamp + quote.quote_expiry_time
+        return now_micros > quote.timestamp + quote.quote_expiry_time * 1_000_000
 
     @staticmethod
     def best_bid(quote: MarketMakerQuote) -> Optional[PriceLevel]:

@@ -27,7 +27,7 @@ impl Default for MarketMakerQuoteBuilder {
             token_pair: None,
             bid_levels: Vec::new(),
             ask_levels: Vec::new(),
-            quote_expiry_time: 30_000_000, // 30 seconds in microseconds
+            quote_expiry_time: 30, // 30 seconds
             timestamp: None,
             sequence_number: None,
             maker_address: None,
@@ -96,13 +96,7 @@ impl MarketMakerQuoteBuilder {
         self
     }
 
-    /// Set quote expiry time in microseconds
-    pub fn expiry_time_micros(mut self, micros: u64) -> Self {
-        self.quote_expiry_time = micros;
-        self
-    }
-
-    /// Set quote expiry time in seconds
+    /// Set the quote validity duration, in **seconds** (the server minimum is 10s).
     pub fn expiry_time_secs(mut self, secs: u64) -> Self {
         self.quote_expiry_time = secs;
         self

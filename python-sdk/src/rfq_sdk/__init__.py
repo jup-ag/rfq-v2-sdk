@@ -58,7 +58,7 @@ from .types import (
 # --- Builders (mirror `pub use builders::*`) ------------------------------
 
 from .builders import (
-    DEFAULT_QUOTE_EXPIRY_MICROS,
+    DEFAULT_QUOTE_EXPIRY_SECS,
     MarketMakerQuoteBuilder,
     QuoteBuilder,
     market_maker_quote_builder,
@@ -136,7 +136,7 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECS",
     "DEFAULT_CHANNEL_BUFFER_SIZE",
     "DEFAULT_ENDPOINT",
-    "DEFAULT_QUOTE_EXPIRY_MICROS",
+    "DEFAULT_QUOTE_EXPIRY_SECS",
     # Submodules
     "builders",
     "error",

@@ -425,7 +425,7 @@ mod tests {
             let quote = MarketMakerQuote {
                 timestamp: 1_000_000,
                 sequence_number: 1,
-                quote_expiry_time: 30_000_000,
+                quote_expiry_time: 30,
                 maker_id: "test-maker".to_string(),
                 maker_address: "11111111111111111111111111111111".to_string(),
                 lot_size_base: 1000,
