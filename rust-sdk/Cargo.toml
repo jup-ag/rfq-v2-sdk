@@ -14,65 +14,29 @@ repository = "https://github.com/jup-ag/rfq-v2-sdk"
 # gRPC and Protocol Buffers
 tonic = { version = "0.14", features = ["tls-native-roots"] }
 tonic-prost = "0.14"
-tonic-reflection = "0.14"
 prost = "0.14"
-prost-types = "0.14"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1"
 
 # Utilities
-uuid = { version = "1.0", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 
-# TLS Configuration
-rustls = { version = "0.23", features = ["ring"] }
-rustls-native-certs = "0.8"
-rustls-pemfile = "2.0"
-tokio-rustls = "0.26"
-
-# Optional features
-futures = { version = "0.3", optional = true }
+# Installed as the default CryptoProvider for TLS connections (see client.rs).
+# default-features = false keeps the aws-lc-rs backend (and its C/asm build) out.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
-# Example-specific dependencies
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rand = "0.8"
 solana-sdk = "2.1"
 base64 = "0.21"
 bincode = "1.3"
 bs58 = "0.5"
 reqwest = { version = "0.11", features = ["json"] }
-fastrand = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 fill-decoder = { path = "../fill-decoder" }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
 protoc-bin-vendored = "3"
-
-[features]
-default = []
-async-stream = ["futures"]
-
-[lib]
-name = "market_maker_client_sdk"
-path = "src/lib.rs"
-
-[[example]]
-name = "production_streaming"
-path = "examples/production_streaming.rs"
-
-[[example]]
-name = "reflection_cli"
-path = "examples/reflection_cli.rs"
-
-[[example]]
-name = "deploy_spl_token"
-path = "examples/deploy_spl_token.rs"
-
-[[example]]
-name = "maker_safety"
-path = "examples/maker_safety.rs"

@@ -163,6 +163,7 @@ fn print_fill(ix: &FillExactInInstruction, a: &FillAnalysis) {
 
 /// Fetch a swap order from the Ultra API `/order` endpoint.
 #[tokio::test]
+#[ignore = "hits the live preprod Ultra API"]
 async fn test_ultra_api_order() {
     let cfg = TestConfig::from_env();
     println!("=== test_ultra_api_order ===");
@@ -188,6 +189,7 @@ async fn test_ultra_api_order() {
 
 /// Full e2e: /order → sign → /execute.
 #[tokio::test]
+#[ignore = "submits a real signed transaction to preprod; needs SOLANA_PRIVATE_KEY"]
 async fn test_execute_order() {
     let cfg = TestConfig::from_env();
     let keypair = cfg.keypair();
@@ -259,6 +261,7 @@ async fn test_execute_order() {
 
 /// Fetch USDC → SPL token order, decode with fill-decoder, verify RFQ v2 fill is present.
 #[tokio::test]
+#[ignore = "hits the live preprod Ultra API"]
 async fn test_decode_spl_token_order() {
     let cfg = TestConfig::from_env();
     println!("=== test_decode_spl_token_order ===");

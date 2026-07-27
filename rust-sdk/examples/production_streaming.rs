@@ -4,10 +4,8 @@
 mod helpers;
 use crate::helpers::datapi::DatapiClient;
 use base64::prelude::*;
-use bs58;
 use market_maker_client_sdk::{
-    streaming::swap_update_helpers, ClientConfig, MarketMakerClient, MarketMakerQuote,
-    MarketMakerSwap, StreamConfig,
+    ClientConfig, MarketMakerClient, MarketMakerQuote, MarketMakerSwap, SwapMessageType, UpdateType,
 };
 use solana_sdk::{
     signature::{Keypair, Signer},
@@ -29,8 +27,6 @@ impl SolanaTokens {
 const PRICE_DECIMALS: u32 = 6; // 6 decimal places for USDC price (1 USDC = 1_000_000 units)
 const SOL_DECIMALS: u32 = 9; // 9 decimal places for SOL (1 SOL = 1_000_000_000 lamports)
 const SPL_TOKEN_DECIMALS: u32 = 6; // 6 decimal places for the custom SPL token
-#[allow(dead_code)]
-const SPL_TOKEN_SCALE: u64 = 10_u64.pow(SPL_TOKEN_DECIMALS);
 const PRICE_SCALE: u64 = 10_u64.pow(PRICE_DECIMALS);
 const SOL_SCALE: u64 = 10_u64.pow(SOL_DECIMALS);
 const BASIS_POINTS_SCALE: u64 = 10_000; // 10,000 basis points = 100%
@@ -69,22 +65,6 @@ async fn fetch_token_prices(
         .map(|d| (d.usd_price * PRICE_SCALE as f64).round() as u64);
 
     Ok((sol_price, spl_price))
-}
-
-/// Fetch only the SOL price via DatAPI
-#[allow(dead_code)]
-async fn fetch_sol_price(
-    datapi_client: &DatapiClient,
-) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-    let token_id = SolanaTokens::SOL.to_string();
-    let response = datapi_client.fetch_price(&token_id).await?;
-
-    let sol_price = response
-        .get(SolanaTokens::SOL)
-        .map(|d| (d.usd_price * PRICE_SCALE as f64).round() as u64)
-        .ok_or("SOL price not found in DatAPI response")?;
-
-    Ok(sol_price)
 }
 
 /// Convert USDC amount (in integer format) to token volume in its smallest unit
@@ -261,11 +241,13 @@ fn validate_versioned_transaction(
     Ok(())
 }
 
+/// How long the swap stream may sit idle before it is considered unhealthy
+const SWAP_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Run the swap streaming loop
 async fn run_swap_stream(
     mut swap_stream: market_maker_client_sdk::streaming::SwapStreamHandle,
     keypair: Keypair,
-    stream_config: &StreamConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut swap_count = 0;
     let mut health_check_counter = 0;
@@ -278,12 +260,12 @@ async fn run_swap_stream(
         // Send periodic pings to keep connection alive
         if last_ping_time.elapsed() >= ping_interval {
             let ping_message = MarketMakerSwap {
-                message_type: market_maker_client_sdk::types::SwapMessageType::Ping as i32,
+                message_type: SwapMessageType::Ping as i32,
                 swap_uuid: String::default(),
                 signed_transaction: String::default(),
             };
 
-            match swap_stream.send_swap(ping_message).await {
+            match swap_stream.send(ping_message).await {
                 Ok(_) => {
                     info!("Sent ping to server");
                     last_ping_time = tokio::time::Instant::now();
@@ -297,82 +279,68 @@ async fn run_swap_stream(
 
         // Receive updates with timeout
         match tokio::time::timeout(Duration::from_millis(100), swap_stream.receive_update()).await {
-            Ok(Ok(Some(swap_update))) => {
+            Ok(Ok(Some(update))) => {
                 health_check_counter += 1;
 
-                // Handle different message types
-                if swap_update_helpers::is_pong(&swap_update) {
-                    info!("Received pong from server");
-                    continue;
-                }
-
-                if swap_update_helpers::is_connection_ready(&swap_update) {
-                    info!(
-                        "Swap stream connection established: {}",
-                        swap_update_helpers::get_status_message(&swap_update).unwrap_or("Ready")
-                    );
-                    continue;
-                }
-
-                if swap_update_helpers::is_error(&swap_update) {
-                    error!(
-                        "Swap stream error: {}",
-                        swap_update_helpers::get_status_message(&swap_update)
-                            .unwrap_or("Unknown error")
-                    );
-                    continue;
-                }
-
-                if swap_update_helpers::is_transaction_confirmed(&swap_update) {
-                    if let Some((uuid, signature)) =
-                        swap_update_helpers::extract_confirmation_details(&swap_update)
-                    {
-                        info!(
-                            "Transaction confirmed - UUID: {}, Signature: {}",
-                            uuid, signature
-                        );
+                // Control messages `continue` so a burst of them cannot delay a
+                // queued SWAP_AVAILABLE behind the pacing sleep at the bottom.
+                match SwapMessageType::try_from(update.message_type) {
+                    Ok(SwapMessageType::Pong) => {
+                        info!("Received pong from server");
+                        continue;
                     }
-                    continue;
-                }
+                    Ok(SwapMessageType::ConnectionReady) => {
+                        info!(
+                            "Swap stream connection established: {}",
+                            update.status_message.as_deref().unwrap_or("Ready")
+                        );
+                        continue;
+                    }
+                    Ok(SwapMessageType::Error) => {
+                        error!(
+                            "Swap stream error: {}",
+                            update.status_message.as_deref().unwrap_or("Unknown error")
+                        );
+                        continue;
+                    }
+                    Ok(SwapMessageType::TransactionConfirmed) => {
+                        info!(
+                            "Transaction confirmed - UUID: {:?}, Signature: {:?}",
+                            update.swap_uuid, update.transaction_signature
+                        );
+                        continue;
+                    }
+                    Ok(SwapMessageType::SwapAvailable) => {
+                        let (Some(swap_uuid), Some(unsigned_tx)) =
+                            (&update.swap_uuid, &update.unsigned_transaction)
+                        else {
+                            warn!("Received swap available message but missing swap details");
+                            continue;
+                        };
 
-                if swap_update_helpers::is_swap_available(&swap_update) {
-                    if let Some((swap_uuid, unsigned_transaction)) =
-                        swap_update_helpers::extract_swap_details(&swap_update)
-                    {
                         swap_count += 1;
                         info!("Swap #{}: {}", swap_count, swap_uuid);
 
-                        match process_and_sign_transaction(
-                            swap_uuid,
-                            unsigned_transaction,
-                            &keypair,
-                        ) {
+                        match process_and_sign_transaction(swap_uuid, unsigned_tx, &keypair) {
                             Ok(signed_tx) => {
-                                let market_maker_swap = MarketMakerSwap {
-                                    message_type:
-                                        market_maker_client_sdk::types::SwapMessageType::SwapSubmit
-                                            as i32,
-                                    swap_uuid: swap_uuid.to_string(),
+                                let submit = MarketMakerSwap {
+                                    message_type: SwapMessageType::SwapSubmit as i32,
+                                    swap_uuid: swap_uuid.clone(),
                                     signed_transaction: signed_tx,
                                 };
-
-                                if let Err(e) = swap_stream.send_swap(market_maker_swap).await {
+                                if let Err(e) = swap_stream.send(submit).await {
                                     error!("Failed to send signed tx: {}", e);
                                     break;
                                 }
                             }
-                            Err(e) => {
-                                error!("Failed to sign transaction: {}", e);
-                            }
+                            Err(e) => error!("Failed to sign transaction: {}", e),
                         }
-                    } else {
-                        warn!("Received swap available message but missing swap details");
                     }
-                } else {
-                    info!(
-                        "Received other swap update type: {}",
-                        swap_update_helpers::update_type_description(&swap_update)
-                    );
+                    // Client -> server only; the server should never send these.
+                    Ok(kind @ (SwapMessageType::Ping | SwapMessageType::SwapSubmit)) => {
+                        warn!("Unexpected inbound swap message type: {:?}", kind)
+                    }
+                    Err(_) => warn!("Unknown swap message_type={}", update.message_type),
                 }
             }
             Ok(Ok(None)) => {
@@ -390,7 +358,7 @@ async fn run_swap_stream(
 
         // Periodic health check
         if health_check_counter >= 10 {
-            if !swap_stream.is_healthy(stream_config).await {
+            if !swap_stream.is_healthy(SWAP_INACTIVITY_TIMEOUT).await {
                 warn!("Swap stream health check failed - possible connection issue");
             }
             health_check_counter = 0;
@@ -504,24 +472,19 @@ async fn drain_quote_updates(stream: &mut market_maker_client_sdk::streaming::Qu
 
 /// Log a QuoteUpdate with full detail depending on its type
 fn log_quote_update(update: &market_maker_client_sdk::QuoteUpdate) {
-    use market_maker_client_sdk::streaming::update_helpers;
-
-    if update_helpers::is_new_quote(update) {
-        info!("Server ACK: quote accepted (NEW)");
-    } else if update_helpers::is_updated_quote(update) {
-        info!("Server ACK: quote accepted (UPDATED)");
-    } else if update_helpers::is_expired_quote(update) {
-        warn!("Server: quote EXPIRED");
-    } else if update_helpers::is_rejected_quote(update) {
-        let reason = update_helpers::get_status_message(update).unwrap_or("no reason provided");
-        error!("Server REJECTED quote — reason: {}", reason);
-    } else if update_helpers::is_heartbeat(update) {
-        info!("Server heartbeat received");
-    } else {
-        warn!(
+    match UpdateType::try_from(update.update_type) {
+        Ok(UpdateType::New) => info!("Server ACK: quote accepted (NEW)"),
+        Ok(UpdateType::Updated) => info!("Server ACK: quote accepted (UPDATED)"),
+        Ok(UpdateType::Expired) => warn!("Server: quote EXPIRED"),
+        Ok(UpdateType::Rejected) => error!(
+            "Server REJECTED quote — reason: {}",
+            update.status_message.as_deref().unwrap_or("no reason provided")
+        ),
+        Ok(UpdateType::Unspecified) => info!("Server heartbeat received"),
+        Err(_) => warn!(
             "Unknown update_type={}, status_message={:?}",
             update.update_type, update.status_message
-        );
+        ),
     }
 }
 
@@ -585,7 +548,7 @@ async fn run_quote_stream(
             build_volume_tiers(sol_quote_builder, sol_price);
 
         let sol_quote = sol_quote_builder.build()?;
-        match stream.send_quote(sol_quote).await {
+        match stream.send(sol_quote).await {
             Ok(_) => {
                 info!(
                     "SOL/USDC  Quote #{} sent (seq: {}) - {} levels, ${}-${}",
@@ -624,7 +587,7 @@ async fn run_quote_stream(
             build_volume_tiers(spl_quote_builder, spl_token_price);
 
         let spl_quote = spl_quote_builder.build()?;
-        match stream.send_quote(spl_quote).await {
+        match stream.send(spl_quote).await {
             Ok(_) => {
                 info!(
                     "MCT/USDC  Quote #{} sent (seq: {}) - {} levels, ${}-${}",
@@ -689,8 +652,8 @@ async fn run_quote_stream(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize the default crypto provider for rustls
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    // Initialize the default crypto provider for rustls (must match the SDK's)
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Initialize structured logging
     tracing_subscriber::fmt()
@@ -775,7 +738,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = ClientConfig::new("https://rfq-mm-edge-grpc.raccoons.dev")
         .with_timeout(30)
-        .with_max_retries(5)
         .with_auth_token(auth_token);
 
     let mut client = match MarketMakerClient::connect_with_config(config).await {
@@ -789,11 +751,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Configure streaming with production settings
-    let stream_config = StreamConfig::new()
-        .with_send_buffer_size(10000)
-        .with_operation_timeout(Duration::from_secs(30));
-
     // Start streaming with sequence synchronization
     // Note: maker_id is still passed for sequence tracking
     // auth_token is now configured in ClientConfig
@@ -805,10 +762,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting quote streaming for maker: {}...", maker_id);
     let (stream, next_sequence) = match client
-        .start_streaming_with_sync_and_config(
+        .start_streaming_with_sync(
             maker_id.clone(),
             client.config().auth_token.clone().unwrap_or_default(),
-            &stream_config,
         )
         .await
     {
@@ -826,10 +782,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let swap_handle = match client.start_swap_streaming().await {
         Ok(swap_stream) => {
             let keypair_clone = Keypair::try_from(&keypair.to_bytes()[..])?;
-            let stream_config_clone = stream_config.clone();
-            Some(tokio::spawn(async move {
-                run_swap_stream(swap_stream, keypair_clone, &stream_config_clone).await
-            }))
+            Some(tokio::spawn(
+                async move { run_swap_stream(swap_stream, keypair_clone).await },
+            ))
         }
         Err(e) => {
             warn!("Swap streaming failed: {}. Continuing with quotes only", e);

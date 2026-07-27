@@ -1,7 +1,6 @@
 //! Shared configuration and helpers for the integration test suite.
 
 use base64::prelude::*;
-use bs58;
 use solana_sdk::{
     signature::{Keypair, Signer},
     transaction::VersionedTransaction,
