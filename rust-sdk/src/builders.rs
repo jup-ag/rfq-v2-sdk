@@ -2,7 +2,14 @@
 
 use crate::error::{MarketMakerError, Result};
 use crate::types::*;
-use chrono::Utc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn now_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is set before the UNIX epoch")
+        .as_micros() as u64
+}
 
 /// Builder for creating MarketMakerQuote instances
 #[derive(Debug, Clone)]
@@ -13,7 +20,6 @@ pub struct MarketMakerQuoteBuilder {
     bid_levels: Vec<PriceLevel>,
     ask_levels: Vec<PriceLevel>,
     quote_expiry_time: u64,
-    timestamp: Option<u64>,
     sequence_number: Option<u64>,
     maker_address: Option<String>,
     lot_size_base: Option<u64>,
@@ -28,7 +34,6 @@ impl Default for MarketMakerQuoteBuilder {
             bid_levels: Vec::new(),
             ask_levels: Vec::new(),
             quote_expiry_time: 30, // 30 seconds
-            timestamp: None,
             sequence_number: None,
             maker_address: None,
             lot_size_base: None,
@@ -66,33 +71,15 @@ impl MarketMakerQuoteBuilder {
         self
     }
 
-    /// Set ETH/USDC token pair
-    pub fn eth_usdc_pair(mut self) -> Self {
-        self.token_pair = Some(TokenPair::eth_usdc());
-        self
-    }
-
     /// Add a bid level
     pub fn bid_level(mut self, volume: u64, price: u64) -> Self {
         self.bid_levels.push(PriceLevel::new(volume, price));
         self
     }
 
-    /// Add multiple bid levels
-    pub fn bid_levels(mut self, levels: Vec<PriceLevel>) -> Self {
-        self.bid_levels.extend(levels);
-        self
-    }
-
     /// Add an ask level
     pub fn ask_level(mut self, volume: u64, price: u64) -> Self {
         self.ask_levels.push(PriceLevel::new(volume, price));
-        self
-    }
-
-    /// Add multiple ask levels
-    pub fn ask_levels(mut self, levels: Vec<PriceLevel>) -> Self {
-        self.ask_levels.extend(levels);
         self
     }
 
@@ -105,12 +92,6 @@ impl MarketMakerQuoteBuilder {
     /// Set the maker's Solana address
     pub fn maker_address(mut self, address: String) -> Self {
         self.maker_address = Some(address);
-        self
-    }
-
-    /// Set a custom timestamp (defaults to current time)
-    pub fn timestamp(mut self, timestamp_micros: u64) -> Self {
-        self.timestamp = Some(timestamp_micros);
         self
     }
 
@@ -144,10 +125,10 @@ impl MarketMakerQuoteBuilder {
 
         // Validate that prices and volumes are non-zero for both bids and asks
         for level in self.bid_levels.iter().chain(self.ask_levels.iter()) {
-            if level.price() == 0 {
+            if level.price == 0 {
                 return Err(MarketMakerError::validation("price cannot be zero"));
             }
-            if level.volume() == 0 {
+            if level.volume == 0 {
                 return Err(MarketMakerError::validation("volume cannot be zero"));
             }
         }
@@ -161,9 +142,7 @@ impl MarketMakerQuoteBuilder {
             .ok_or_else(|| MarketMakerError::validation("lot_size_base is required"))?;
 
         Ok(MarketMakerQuote {
-            timestamp: self
-                .timestamp
-                .unwrap_or_else(|| Utc::now().timestamp_micros() as u64),
+            timestamp: now_micros(),
             sequence_number: self.sequence_number.unwrap_or(1),
             quote_expiry_time: self.quote_expiry_time,
             maker_id,
@@ -174,29 +153,6 @@ impl MarketMakerQuoteBuilder {
             maker_address,
             lot_size_base,
         })
-    }
-}
-
-/// Extension trait to add builder methods to MarketMakerQuote
-pub trait MarketMakerQuoteBuilderExt {
-    /// Create a builder from an existing quote
-    fn to_builder(&self) -> MarketMakerQuoteBuilder;
-}
-
-impl MarketMakerQuoteBuilderExt for MarketMakerQuote {
-    fn to_builder(&self) -> MarketMakerQuoteBuilder {
-        MarketMakerQuoteBuilder {
-            maker_id: Some(self.maker_id.clone()),
-            cluster: Cluster::try_from(self.cluster).unwrap_or(Cluster::Mainnet),
-            token_pair: Some(self.token_pair.clone()),
-            bid_levels: self.bid_levels.clone(),
-            ask_levels: self.ask_levels.clone(),
-            quote_expiry_time: self.quote_expiry_time,
-            timestamp: Some(self.timestamp),
-            sequence_number: Some(self.sequence_number),
-            maker_address: Some(self.maker_address.clone()),
-            lot_size_base: Some(self.lot_size_base),
-        }
     }
 }
 

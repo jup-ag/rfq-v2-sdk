@@ -6,24 +6,17 @@ pub type Result<T> = std::result::Result<T, FillDecoderError>;
 
 /// Errors produced by the fill-decoder crate.
 #[derive(Error, Debug)]
-pub enum FillDecoderError {
-    /// Validation / format errors (e.g. wrong discriminator, missing accounts).
-    #[error("Validation error: {0}")]
-    Validation(String),
-
-    /// Catch-all for unexpected failures (overflow, truncated data, etc.).
-    #[error("Error: {0}")]
-    Other(String),
-}
+#[error("{0}")]
+pub struct FillDecoderError(String);
 
 impl FillDecoderError {
-    /// Create a validation error.
+    /// Create a validation / format error (wrong discriminator, missing accounts).
     pub fn validation<S: Into<String>>(msg: S) -> Self {
-        Self::Validation(msg.into())
+        Self(format!("validation error: {}", msg.into()))
     }
 
-    /// Create a generic error.
+    /// Create a generic error (overflow, truncated data, …).
     pub fn other<S: Into<String>>(msg: S) -> Self {
-        Self::Other(msg.into())
+        Self(msg.into())
     }
 }

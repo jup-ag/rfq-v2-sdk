@@ -153,19 +153,6 @@ impl FillMints {
         }
     }
 
-    /// Build from the route's input/output mints and the taker's side.
-    pub fn from_input_output(input_mint: String, output_mint: String, taker_side: Side) -> Self {
-        let (base_mint, quote_mint) = match taker_side {
-            Side::Bid => (output_mint.clone(), input_mint.clone()),
-            Side::Ask => (input_mint.clone(), output_mint.clone()),
-        };
-        Self {
-            input_mint,
-            output_mint,
-            base_mint,
-            quote_mint,
-        }
-    }
 }
 
 impl std::fmt::Display for FillMints {

@@ -87,10 +87,3 @@ pub fn check_fill_exclusivity_multi(
         .map(|pk| check_fill_exclusivity(message, pk))
         .collect()
 }
-
-/// Returns `true` if **every** pubkey passes the exclusivity check.
-pub fn all_exclusive(message: &DecodedMessage, pubkeys: &[&str]) -> bool {
-    check_fill_exclusivity_multi(message, pubkeys)
-        .iter()
-        .all(|r| r.is_exclusive())
-}
