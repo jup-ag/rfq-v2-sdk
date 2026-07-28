@@ -1,36 +1,32 @@
 """Jupiter RFQv2 SDK for Python.
 
-This SDK provides a Python interface for the RFQv2 Ingestion Service. It
-mirrors the Rust ``market-maker-client-sdk`` crate so the two SDKs share the
-same shape, naming, and feature set.
+This SDK provides a Python interface for the RFQv2 Ingestion Service.
 
 Key entry points:
 
 * :class:`MarketMakerClient` — async gRPC client (unary RPCs + streaming).
 * :class:`MarketMakerQuoteBuilder` — fluent builder for quotes.
-* :class:`ReflectionClient` / :class:`ReflectionHandle` — gRPC reflection.
-* :mod:`rfq_sdk.streaming` — :class:`QuoteStreamHandle`,
-  :class:`SwapStreamHandle`, :class:`update_helpers`, :class:`swap_update_helpers`.
+* :mod:`rfq_sdk.streaming` — :class:`StreamHandle` (aliased as
+  :class:`QuoteStreamHandle` / :class:`SwapStreamHandle`),
+  :class:`update_helpers`, :class:`swap_update_helpers`.
 * :mod:`rfq_sdk.error` — :class:`MarketMakerError` and subclasses.
-"""
 
-# --- Version & constants (mirror `lib.rs`) --------------------------------
+Each submodule defines its own ``__all__``; the names below are the
+convenience re-exports available directly on ``rfq_sdk``.
+"""
 
 __version__ = "0.1.0"
 VERSION: str = __version__
-DEFAULT_TIMEOUT_SECS: int = 30
-DEFAULT_CHANNEL_BUFFER_SIZE: int = 1000
 
 # --- Submodules (re-exported as `rfq_sdk.<name>`) -------------------------
 
-from . import builders, error, reflection, streaming, types
-from . import swap_helpers  # backward-compat shim
+from . import builders, error, streaming, types
 
 # --- Client ---------------------------------------------------------------
 
 from .client import MarketMakerClient
 
-# --- Errors (mirror `pub use error::{MarketMakerError, Result}`) ----------
+# --- Errors ---------------------------------------------------------------
 
 from .error import (
     ConfigurationError,
@@ -44,71 +40,13 @@ from .error import (
     ValidationError,
 )
 
-# --- Types & helpers (mirror `pub use types::*`) --------------------------
+# --- Constants, configuration, helpers & protobuf types -------------------
 
 from .types import (
+    DEFAULT_CHANNEL_BUFFER_SIZE,
     DEFAULT_ENDPOINT,
+    DEFAULT_TIMEOUT_SECS,
     ClientConfig,
-    PriceLevelHelper,
-    QuoteHelper,
-    TokenHelper,
-    TokenPairHelper,
-)
-
-# --- Builders (mirror `pub use builders::*`) ------------------------------
-
-from .builders import (
-    DEFAULT_QUOTE_EXPIRY_SECS,
-    MarketMakerQuoteBuilder,
-    QuoteBuilder,
-    market_maker_quote_builder,
-)
-
-# --- Streaming (mirror `pub use streaming::*`) ----------------------------
-
-from .streaming import (
-    ConnectionStats,
-    QuoteStreamHandle,
-    QuoteUpdateStream,
-    StreamConfig,
-    SwapStats,
-    SwapStreamHandle,
-)
-
-# --- Reflection (mirror `pub use reflection::*`) -------------------------
-
-from .reflection import (
-    FieldInfo,
-    MessageInfo,
-    MethodInfo,
-    ReflectionClient,
-    ReflectionHandle,
-    ServiceInfo,
-)
-
-# --- Auth helpers (Python-only convenience) ------------------------------
-
-from .auth import (
-    get_auth_token_from_env,
-    get_maker_id_from_env,
-    get_solana_private_key_from_env,
-    validate_environment,
-)
-
-# --- Utility helpers (Python-only convenience) ---------------------------
-
-from .utils import (
-    current_timestamp_micros,
-    format_price,
-    format_volume,
-    to_raw_price,
-    to_raw_volume,
-    validate_keypair,
-)
-
-# --- Re-export protobuf types (mirror `pub mod market_maker { ... }`) ----
-
-from protos.market_maker_pb2 import (
     Cluster,
     GetAllOrderbooksRequest,
     GetAllOrderbooksResponse,
@@ -118,6 +56,7 @@ from protos.market_maker_pb2 import (
     MarketMakerSwap,
     Orderbook,
     PriceLevel,
+    QuoteHelper,
     QuoteResponse,
     QuoteUpdate,
     SequenceNumberRequest,
@@ -126,89 +65,38 @@ from protos.market_maker_pb2 import (
     SwapUpdate,
     Token,
     TokenPair,
+    TokenPairHelper,
     UpdateType,
 )
 
+# --- Builders -------------------------------------------------------------
+
+from .builders import DEFAULT_QUOTE_EXPIRY_SECS, MarketMakerQuoteBuilder
+
+# --- Streaming ------------------------------------------------------------
+
+from .streaming import (
+    ConnectionStats,
+    QuoteStreamHandle,
+    StreamConfig,
+    StreamHandle,
+    SwapStreamHandle,
+    swap_update_helpers,
+    update_helpers,
+)
+
+# Composed from each submodule's own ``__all__`` rather than hand-listed, so the
+# export list has a single source of truth.
 __all__ = [
-    # Version / constants
-    "VERSION",
     "__version__",
-    "DEFAULT_TIMEOUT_SECS",
-    "DEFAULT_CHANNEL_BUFFER_SIZE",
-    "DEFAULT_ENDPOINT",
-    "DEFAULT_QUOTE_EXPIRY_SECS",
-    # Submodules
+    "VERSION",
+    "MarketMakerClient",
     "builders",
     "error",
-    "reflection",
     "streaming",
-    "swap_helpers",
     "types",
-    # Client
-    "MarketMakerClient",
-    # Errors
-    "MarketMakerError",
-    "ConfigurationError",
-    "ConnectionError",
-    "GrpcError",
-    "OtherError",
-    "SerializationError",
-    "StreamingError",
-    "TimeoutError",
-    "ValidationError",
-    # Configuration / helpers
-    "ClientConfig",
-    "TokenHelper",
-    "TokenPairHelper",
-    "PriceLevelHelper",
-    "QuoteHelper",
-    # Builders
-    "MarketMakerQuoteBuilder",
-    "QuoteBuilder",
-    "market_maker_quote_builder",
-    # Streaming
-    "ConnectionStats",
-    "StreamConfig",
-    "QuoteStreamHandle",
-    "QuoteUpdateStream",
-    "SwapStats",
-    "SwapStreamHandle",
-    # Reflection
-    "ReflectionClient",
-    "ReflectionHandle",
-    "ServiceInfo",
-    "MethodInfo",
-    "MessageInfo",
-    "FieldInfo",
-    # Auth
-    "get_auth_token_from_env",
-    "get_maker_id_from_env",
-    "get_solana_private_key_from_env",
-    "validate_environment",
-    # Utils
-    "current_timestamp_micros",
-    "format_price",
-    "format_volume",
-    "to_raw_price",
-    "to_raw_volume",
-    "validate_keypair",
-    # Protobuf types
-    "Cluster",
-    "GetAllOrderbooksRequest",
-    "GetAllOrderbooksResponse",
-    "GetQuotesRequest",
-    "GetQuotesResponse",
-    "MarketMakerQuote",
-    "MarketMakerSwap",
-    "Orderbook",
-    "PriceLevel",
-    "QuoteResponse",
-    "QuoteUpdate",
-    "SequenceNumberRequest",
-    "SequenceNumberResponse",
-    "SwapMessageType",
-    "SwapUpdate",
-    "Token",
-    "TokenPair",
-    "UpdateType",
+    *error.__all__,
+    *types.__all__,
+    *builders.__all__,
+    *streaming.__all__,
 ]

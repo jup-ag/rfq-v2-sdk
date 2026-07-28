@@ -28,7 +28,6 @@ classifiers = [
 dependencies = [
     "grpcio>=1.60.0",
     "grpcio-tools>=1.60.0",
-    "grpcio-reflection>=1.60.0",
     "protobuf>=4.25.0",
     "solders>=0.18.0",
     "base58>=2.1.1",
@@ -47,6 +46,12 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/jup-ag/rfq-v2-sdk"
 Repository = "https://github.com/jup-ag/rfq-v2-sdk"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.black]
 line-length = 100

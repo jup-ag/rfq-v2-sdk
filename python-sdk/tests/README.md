@@ -10,7 +10,7 @@ the preprod Ultra API. Mirrors the Rust integration suite at
 | ----------------------------- | ---------------------------------------------------------- |
 | `test_builders.py`            | Unit tests for `MarketMakerQuoteBuilder` validation rules. |
 | `test_client.py`              | Mock-server tests for `MarketMakerClient.get_quotes`.      |
-| `test_reflection.py`          | Unit tests for the reflection dataclass formatting.        |
+| `test_streaming.py`           | Mock-server tests for `StreamHandle` send/receive.         |
 | `test_ultra_api_e2e.py`       | Integration tests against the live preprod Ultra API.      |
 | `common/__init__.py`          | Shared `TestConfig` + signing helper.                      |
 

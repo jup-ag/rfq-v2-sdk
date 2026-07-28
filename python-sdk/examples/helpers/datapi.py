@@ -5,7 +5,7 @@ Mirrors ``rust-sdk/examples/helpers/datapi.rs``: a tiny HTTP wrapper over
 """
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable
 
 import requests
 

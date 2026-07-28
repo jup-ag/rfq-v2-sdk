@@ -1,15 +1,15 @@
 """Streaming functionality for real-time quote and swap updates.
 
-Mirrors ``rust-sdk/src/streaming.rs``: provides bidirectional gRPC streaming
-between the market maker client and the ingestion service. The client can send
-quotes / swaps to the server and receive real-time updates.
+Provides bidirectional gRPC streaming between the market maker client and the
+ingestion service. The client can send quotes / swaps to the server and receive
+real-time updates.
 """
 
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Union
 
 import grpc
 
@@ -22,42 +22,25 @@ from protos.market_maker_pb2 import (
     UpdateType,
 )
 
-from .error import GrpcError, MarketMakerError, StreamingError, TimeoutError
+from .error import GrpcError, StreamingError, TimeoutError
 
 logger = logging.getLogger(__name__)
+
+OutboundMessage = Union[MarketMakerQuote, MarketMakerSwap]
+InboundUpdate = Union[QuoteUpdate, SwapUpdate]
 
 
 # --- Stream configuration --------------------------------------------------
 
 @dataclass
 class StreamConfig:
-    """Configuration for streaming behavior.
-
-    Mirrors the Rust ``StreamConfig`` struct.
-    """
+    """Configuration for streaming behavior."""
 
     send_buffer_size: int = 1000
-    operation_timeout: timedelta = field(default_factory=lambda: timedelta(seconds=30))
-    auto_reconnect: bool = False
-    max_reconnect_attempts: int = 3
     inactivity_timeout: timedelta = field(default_factory=lambda: timedelta(seconds=120))
-
-    @classmethod
-    def new(cls) -> "StreamConfig":
-        """Create a new stream configuration with defaults."""
-        return cls()
 
     def with_send_buffer_size(self, size: int) -> "StreamConfig":
         self.send_buffer_size = size
-        return self
-
-    def with_operation_timeout(self, timeout: timedelta) -> "StreamConfig":
-        self.operation_timeout = timeout
-        return self
-
-    def with_auto_reconnect(self, max_attempts: int) -> "StreamConfig":
-        self.auto_reconnect = True
-        self.max_reconnect_attempts = max_attempts
         return self
 
     def with_inactivity_timeout(self, timeout: timedelta) -> "StreamConfig":
@@ -71,15 +54,12 @@ class StreamConfig:
 class ConnectionStats:
     """Generic connection statistics for monitoring stream health.
 
-    Mirrors the Rust ``ConnectionStats`` struct. ``connected_at`` and
-    ``last_activity`` are :class:`datetime` instances (Rust uses
-    ``std::time::Instant``).
+    ``connected_at`` and ``last_activity`` are :class:`datetime` instances.
     """
 
     messages_sent: int = 0
     updates_received: int = 0
     errors_encountered: int = 0
-    reconnections: int = 0
     connected_at: datetime = field(default_factory=datetime.now)
     last_activity: Optional[datetime] = None
 
@@ -97,66 +77,59 @@ class ConnectionStats:
     def error_encountered(self) -> None:
         self.errors_encountered += 1
 
-    def reconnection(self) -> None:
-        self.reconnections += 1
-
     def time_since_last_activity(self) -> Optional[timedelta]:
         if self.last_activity is None:
             return None
         return datetime.now() - self.last_activity
 
     def elapsed(self) -> timedelta:
-        """Time elapsed since connection — mirrors ``connected_at.elapsed()``."""
+        """Time elapsed since the connection was established."""
         return datetime.now() - self.connected_at
 
 
-# Type alias matching the Rust SDK
-SwapStats = ConnectionStats
+# --- Stream handle ---------------------------------------------------------
 
+class StreamHandle:
+    """Handle for managing a bidirectional gRPC stream.
 
-# --- Quote stream handle ---------------------------------------------------
-
-class QuoteStreamHandle:
-    """Handle for managing a bidirectional gRPC quote stream.
-
-    Mirrors the Rust ``QuoteStreamHandle``.
+    Used for both quote streams and swap streams; the only difference is the
+    message type flowing in each direction.
     """
 
     def __init__(
         self,
-        quote_queue: asyncio.Queue,
+        queue: asyncio.Queue,
         update_stream: "grpc.aio.StreamStreamCall",
         config: Optional[StreamConfig] = None,
+        kind: str = "stream",
     ):
-        self._quote_queue = quote_queue
+        self._queue = queue
         self._update_stream = update_stream
         self._config = config or StreamConfig()
+        self._kind = kind
         self._is_closed = False
         self._stats = ConnectionStats()
         self._stats_lock = asyncio.Lock()
-        self._shutdown = asyncio.Event()
-        # Public attribute mirroring Rust's `update_receiver`
-        self.update_receiver = update_stream
 
-    async def send_quote(self, quote: MarketMakerQuote) -> None:
-        """Send a quote directly to the gRPC server.
+    async def send(self, msg: OutboundMessage) -> None:
+        """Send a message to the gRPC server.
 
         Raises :class:`StreamingError` if the stream is closed.
         """
         if self._is_closed:
             raise StreamingError("Stream has been closed")
         try:
-            await self._quote_queue.put(quote)
+            await self._queue.put(msg)
         except Exception as exc:  # pragma: no cover - asyncio.Queue does not raise
             async with self._stats_lock:
                 self._stats.error_encountered()
-            raise StreamingError(f"Failed to send quote: {exc}") from exc
+            raise StreamingError(f"Failed to send message: {exc}") from exc
 
         async with self._stats_lock:
             self._stats.message_sent()
 
-    async def receive_update(self) -> Optional[QuoteUpdate]:
-        """Receive the next quote update from the gRPC server.
+    async def receive_update(self) -> Optional[InboundUpdate]:
+        """Receive the next update from the gRPC server.
 
         Returns ``None`` when the stream ends.
         """
@@ -174,7 +147,7 @@ class QuoteStreamHandle:
 
         # gRPC aio uses an end-of-stream sentinel; both ``None`` and
         # ``grpc.aio.EOF`` indicate the stream is finished.
-        if update is None or update is getattr(grpc.aio, "EOF", object()):
+        if update is None or update is grpc.aio.EOF:
             self._is_closed = True
             return None
 
@@ -182,7 +155,7 @@ class QuoteStreamHandle:
             self._stats.update_received()
         return update
 
-    async def receive_update_timeout(self, timeout_secs: float) -> Optional[QuoteUpdate]:
+    async def receive_update_timeout(self, timeout_secs: float) -> Optional[InboundUpdate]:
         """Receive an update with a timeout (in seconds)."""
         try:
             return await asyncio.wait_for(self.receive_update(), timeout=timeout_secs)
@@ -190,15 +163,19 @@ class QuoteStreamHandle:
             raise TimeoutError("Timed out waiting for update") from exc
 
     async def close(self) -> None:
-        """Close the gRPC stream gracefully."""
+        """Close the gRPC stream gracefully.
+
+        Never blocks: signalling the outbound iterator and cancelling the
+        inbound call are both non-blocking, so there is nothing to time out on.
+        """
         if self._is_closed:
             return
-        logger.info("Initiating graceful stream shutdown")
+        logger.info("Initiating graceful %s shutdown", self._kind)
         self._is_closed = True
 
         # Signal the outbound iterator to stop
         try:
-            self._quote_queue.put_nowait(None)
+            self._queue.put_nowait(None)
         except asyncio.QueueFull:
             pass
 
@@ -208,17 +185,7 @@ class QuoteStreamHandle:
         except Exception:  # noqa: BLE001 - best effort cancel
             pass
 
-        self._shutdown.set()
-        await asyncio.sleep(0.1)
-        logger.info("Stream shutdown completed")
-
-    async def close_with_timeout(self, timeout_secs: float) -> None:
-        """Close the stream with a timeout, raising :class:`TimeoutError` on timeout."""
-        try:
-            await asyncio.wait_for(self.close(), timeout=timeout_secs)
-        except asyncio.TimeoutError as exc:
-            self._is_closed = True
-            raise TimeoutError("Stream close operation timed out") from exc
+        logger.info("%s shutdown completed", self._kind.capitalize())
 
     async def is_closed(self) -> bool:
         """Check if the stream is closed."""
@@ -231,21 +198,14 @@ class QuoteStreamHandle:
                 messages_sent=self._stats.messages_sent,
                 updates_received=self._stats.updates_received,
                 errors_encountered=self._stats.errors_encountered,
-                reconnections=self._stats.reconnections,
                 connected_at=self._stats.connected_at,
                 last_activity=self._stats.last_activity,
             )
 
-    async def reset_stats(self) -> None:
-        """Reset connection statistics."""
-        async with self._stats_lock:
-            self._stats = ConnectionStats()
-
     async def is_healthy(self, config: Optional[StreamConfig] = None) -> bool:
         """Return ``True`` while the stream has had recent activity.
 
-        Mirrors :meth:`SwapStreamHandle.is_healthy` from the Rust SDK and
-        uses :attr:`StreamConfig.inactivity_timeout`.
+        Uses :attr:`StreamConfig.inactivity_timeout`.
         """
         cfg = config or self._config
         async with self._stats_lock:
@@ -254,175 +214,18 @@ class QuoteStreamHandle:
                 return since <= cfg.inactivity_timeout
             return self._stats.elapsed() < cfg.inactivity_timeout
 
-    async def wait_for_shutdown(self) -> None:
-        """Block until :meth:`close` is invoked."""
-        await self._shutdown.wait()
-
-    def updates(self) -> "QuoteUpdateStream":
-        """Return an async iterator yielding :class:`QuoteUpdate` items."""
-        return QuoteUpdateStream(self)
-
-
-class QuoteUpdateStream:
-    """Async iterator helper for :class:`QuoteStreamHandle.updates`."""
-
-    def __init__(self, handle: QuoteStreamHandle):
-        self._handle = handle
-
-    def __aiter__(self) -> "QuoteUpdateStream":
-        return self
-
-    async def __anext__(self) -> QuoteUpdate:
-        update = await self.next()
-        if update is None:
-            raise StopAsyncIteration
-        return update
-
-    async def next(self) -> Optional[QuoteUpdate]:
-        """Get the next update with graceful shutdown support."""
-        if await self._handle.is_closed():
-            return None
-        return await self._handle.receive_update()
-
-    async def next_timeout(self, timeout_secs: float) -> Optional[QuoteUpdate]:
-        """Get the next update with a timeout (in seconds)."""
-        if await self._handle.is_closed():
-            return None
-        return await self._handle.receive_update_timeout(timeout_secs)
-
-
-# --- Swap stream handle ----------------------------------------------------
-
-class SwapStreamHandle:
-    """Handle for managing a bidirectional gRPC swap stream.
-
-    Mirrors the Rust ``SwapStreamHandle``.
-    """
-
-    def __init__(
-        self,
-        swap_queue: asyncio.Queue,
-        update_stream: "grpc.aio.StreamStreamCall",
-        config: Optional[StreamConfig] = None,
-    ):
-        self._swap_queue = swap_queue
-        self._update_stream = update_stream
-        self._config = config or StreamConfig()
-        self._is_closed = False
-        self._stats = ConnectionStats()
-        self._stats_lock = asyncio.Lock()
-        self._shutdown = asyncio.Event()
-        self.update_receiver = update_stream
-
-    async def send_swap(self, swap: MarketMakerSwap) -> None:
-        """Send a swap directly to the gRPC server."""
-        if self._is_closed:
-            raise StreamingError("Stream has been closed")
-        try:
-            await self._swap_queue.put(swap)
-        except Exception as exc:  # pragma: no cover
-            async with self._stats_lock:
-                self._stats.error_encountered()
-            raise StreamingError(f"Failed to send swap: {exc}") from exc
-
-        async with self._stats_lock:
-            self._stats.message_sent()
-
-    async def receive_update(self) -> Optional[SwapUpdate]:
-        """Receive the next swap update from the gRPC server."""
-        if self._is_closed:
-            return None
-        try:
-            update = await self._update_stream.read()
-        except asyncio.CancelledError:
-            self._is_closed = True
-            return None
-        except grpc.RpcError as rpc_err:
-            async with self._stats_lock:
-                self._stats.error_encountered()
-            raise GrpcError(rpc_err) from rpc_err
-
-        if update is None or update is getattr(grpc.aio, "EOF", object()):
-            self._is_closed = True
-            return None
-
-        async with self._stats_lock:
-            self._stats.update_received()
-        return update
-
-    async def receive_update_timeout(self, timeout_secs: float) -> Optional[SwapUpdate]:
-        """Receive an update with a timeout (in seconds)."""
-        try:
-            return await asyncio.wait_for(self.receive_update(), timeout=timeout_secs)
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError("Timed out waiting for update") from exc
-
-    async def close(self) -> None:
-        """Close the gRPC swap stream gracefully."""
-        if self._is_closed:
-            return
-        logger.info("Initiating graceful swap stream shutdown")
-        self._is_closed = True
-
-        try:
-            self._swap_queue.put_nowait(None)
-        except asyncio.QueueFull:
-            pass
-
-        try:
-            self._update_stream.cancel()
-        except Exception:  # noqa: BLE001
-            pass
-
-        self._shutdown.set()
-        await asyncio.sleep(0.1)
-        logger.info("Swap stream shutdown completed")
-
-    async def close_with_timeout(self, timeout_secs: float) -> None:
-        """Close the stream with a timeout."""
-        try:
-            await asyncio.wait_for(self.close(), timeout=timeout_secs)
-        except asyncio.TimeoutError as exc:
-            self._is_closed = True
-            raise TimeoutError("Swap stream close operation timed out") from exc
-
-    async def is_closed(self) -> bool:
-        return self._is_closed
-
-    async def get_stats(self) -> ConnectionStats:
-        async with self._stats_lock:
-            return ConnectionStats(
-                messages_sent=self._stats.messages_sent,
-                updates_received=self._stats.updates_received,
-                errors_encountered=self._stats.errors_encountered,
-                reconnections=self._stats.reconnections,
-                connected_at=self._stats.connected_at,
-                last_activity=self._stats.last_activity,
-            )
-
-    async def reset_stats(self) -> None:
-        async with self._stats_lock:
-            self._stats = ConnectionStats()
-
-    async def is_healthy(self, config: Optional[StreamConfig] = None) -> bool:
-        """Check connection health based on activity."""
-        cfg = config or self._config
-        async with self._stats_lock:
-            since = self._stats.time_since_last_activity()
-            if since is not None:
-                return since <= cfg.inactivity_timeout
-            return self._stats.elapsed() < cfg.inactivity_timeout
-
-    async def wait_for_shutdown(self) -> None:
-        await self._shutdown.wait()
-
-    async def updates(self) -> AsyncIterator[SwapUpdate]:
-        """Async generator yielding :class:`SwapUpdate` items."""
+    async def updates(self) -> AsyncIterator[InboundUpdate]:
+        """Async generator yielding updates until the stream ends."""
         while not self._is_closed:
             update = await self.receive_update()
             if update is None:
                 break
             yield update
+
+
+# Aliases kept for readable type hints at call sites.
+QuoteStreamHandle = StreamHandle
+SwapStreamHandle = StreamHandle
 
 
 # --- Quote update helpers (mirrors `update_helpers` mod) -------------------
@@ -560,9 +363,8 @@ class swap_update_helpers:  # noqa: N801 - mirrors Rust module name
 __all__ = [
     "ConnectionStats",
     "QuoteStreamHandle",
-    "QuoteUpdateStream",
     "StreamConfig",
-    "SwapStats",
+    "StreamHandle",
     "SwapStreamHandle",
     "swap_update_helpers",
     "update_helpers",

@@ -21,49 +21,6 @@ class MarketMakerError(Exception):
     def __str__(self) -> str:
         return self.message
 
-    # ------------------------------------------------------------------
-    # Constructors that mirror the Rust helpers (`MarketMakerError::validation`
-    # etc.). They return the appropriate subclass so calling code can use
-    # ``raise MarketMakerError.validation("…")``.
-    # ------------------------------------------------------------------
-    @staticmethod
-    def validation(msg: str) -> "ValidationError":
-        return ValidationError(msg)
-
-    @staticmethod
-    def streaming(msg: str) -> "StreamingError":
-        return StreamingError(msg)
-
-    @staticmethod
-    def timeout(msg: str) -> "TimeoutError":
-        return TimeoutError(msg)
-
-    @staticmethod
-    def configuration(msg: str) -> "ConfigurationError":
-        return ConfigurationError(msg)
-
-    @staticmethod
-    def other(msg: str) -> "OtherError":
-        return OtherError(msg)
-
-    # ------------------------------------------------------------------
-    # Type predicates that mirror Rust's `is_*_error()` helpers.
-    # ------------------------------------------------------------------
-    def is_connection_error(self) -> bool:
-        return isinstance(self, ConnectionError)
-
-    def is_grpc_error(self) -> bool:
-        return isinstance(self, GrpcError)
-
-    def is_validation_error(self) -> bool:
-        return isinstance(self, ValidationError)
-
-    def is_streaming_error(self) -> bool:
-        return isinstance(self, StreamingError)
-
-    def is_timeout_error(self) -> bool:
-        return isinstance(self, TimeoutError)
-
 
 class ConnectionError(MarketMakerError):
     """Raised for connection-related failures (channel setup, transport errors)."""

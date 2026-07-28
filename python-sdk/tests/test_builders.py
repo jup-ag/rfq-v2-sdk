@@ -16,7 +16,7 @@ from rfq_sdk import (
 
 def _builder():
     return (
-        MarketMakerQuoteBuilder.new()
+        MarketMakerQuoteBuilder()
         .maker_id("test-maker")
         .sol_usdc_pair()
         .maker_address("11111111111111111111111111111111")
@@ -48,7 +48,7 @@ def test_build_uses_default_timestamp_when_unset():
 
 def test_build_eth_usdc_pair():
     quote = (
-        MarketMakerQuoteBuilder.new()
+        MarketMakerQuoteBuilder()
         .maker_id("test-maker")
         .eth_usdc_pair()
         .maker_address("11111111111111111111111111111111")
@@ -64,7 +64,7 @@ def test_build_eth_usdc_pair():
 def test_missing_maker_id_raises():
     with pytest.raises(ValidationError, match="maker_id is required"):
         (
-            MarketMakerQuoteBuilder.new()
+            MarketMakerQuoteBuilder()
             .sol_usdc_pair()
             .maker_address("a")
             .lot_size_base(1)
@@ -76,7 +76,7 @@ def test_missing_maker_id_raises():
 def test_missing_token_pair_raises():
     with pytest.raises(ValidationError, match="token_pair is required"):
         (
-            MarketMakerQuoteBuilder.new()
+            MarketMakerQuoteBuilder()
             .maker_id("m")
             .maker_address("a")
             .lot_size_base(1)
@@ -103,7 +103,7 @@ def test_zero_volume_raises():
 def test_missing_maker_address_raises():
     with pytest.raises(ValidationError, match="maker_address is required"):
         (
-            MarketMakerQuoteBuilder.new()
+            MarketMakerQuoteBuilder()
             .maker_id("m")
             .sol_usdc_pair()
             .lot_size_base(1)
@@ -115,7 +115,7 @@ def test_missing_maker_address_raises():
 def test_missing_lot_size_base_raises():
     with pytest.raises(ValidationError, match="lot_size_base is required"):
         (
-            MarketMakerQuoteBuilder.new()
+            MarketMakerQuoteBuilder()
             .maker_id("m")
             .sol_usdc_pair()
             .maker_address("a")
