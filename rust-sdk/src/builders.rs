@@ -20,7 +20,6 @@ pub struct MarketMakerQuoteBuilder {
     bid_levels: Vec<PriceLevel>,
     ask_levels: Vec<PriceLevel>,
     quote_expiry_time: u64,
-    timestamp: Option<u64>,
     sequence_number: Option<u64>,
     maker_address: Option<String>,
     lot_size_base: Option<u64>,
@@ -35,7 +34,6 @@ impl Default for MarketMakerQuoteBuilder {
             bid_levels: Vec::new(),
             ask_levels: Vec::new(),
             quote_expiry_time: 30, // 30 seconds
-            timestamp: None,
             sequence_number: None,
             maker_address: None,
             lot_size_base: None,
@@ -73,33 +71,15 @@ impl MarketMakerQuoteBuilder {
         self
     }
 
-    /// Set ETH/USDC token pair
-    pub fn eth_usdc_pair(mut self) -> Self {
-        self.token_pair = Some(TokenPair::eth_usdc());
-        self
-    }
-
     /// Add a bid level
     pub fn bid_level(mut self, volume: u64, price: u64) -> Self {
         self.bid_levels.push(PriceLevel::new(volume, price));
         self
     }
 
-    /// Add multiple bid levels
-    pub fn bid_levels(mut self, levels: Vec<PriceLevel>) -> Self {
-        self.bid_levels.extend(levels);
-        self
-    }
-
     /// Add an ask level
     pub fn ask_level(mut self, volume: u64, price: u64) -> Self {
         self.ask_levels.push(PriceLevel::new(volume, price));
-        self
-    }
-
-    /// Add multiple ask levels
-    pub fn ask_levels(mut self, levels: Vec<PriceLevel>) -> Self {
-        self.ask_levels.extend(levels);
         self
     }
 
@@ -112,12 +92,6 @@ impl MarketMakerQuoteBuilder {
     /// Set the maker's Solana address
     pub fn maker_address(mut self, address: String) -> Self {
         self.maker_address = Some(address);
-        self
-    }
-
-    /// Set a custom timestamp (defaults to current time)
-    pub fn timestamp(mut self, timestamp_micros: u64) -> Self {
-        self.timestamp = Some(timestamp_micros);
         self
     }
 
@@ -168,7 +142,7 @@ impl MarketMakerQuoteBuilder {
             .ok_or_else(|| MarketMakerError::validation("lot_size_base is required"))?;
 
         Ok(MarketMakerQuote {
-            timestamp: self.timestamp.unwrap_or_else(now_micros),
+            timestamp: now_micros(),
             sequence_number: self.sequence_number.unwrap_or(1),
             quote_expiry_time: self.quote_expiry_time,
             maker_id,

@@ -3,11 +3,9 @@
 use borsh::BorshDeserialize;
 
 use crate::analysis::{analyze_fill, is_params_plausible};
-use crate::decode::FILL_EXACT_IN_DISCRIMINATOR;
 use crate::types::{FillAnalysis, FillExactInInstruction, FillExactInParams, Side};
 
 pub const JUPITER_PROGRAM_ID: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-pub const AGGREGATOR_IDL_JSON: &str = include_str!("../idls/aggregator.json");
 
 const ROUTE: [u8; 8] = [229, 23, 203, 151, 122, 227, 173, 42];
 const ROUTE_WITH_TOKEN_LEDGER: [u8; 8] = [150, 86, 71, 116, 167, 93, 14, 104];
@@ -45,6 +43,10 @@ enum JupSide {
     Bid,
     Ask,
 }
+
+/// One `JupiterRfqV2` step pulled out of a route plan:
+/// `(side, fill_data, input_index, output_index, bps)`.
+type RfqStep = (JupSide, Vec<u8>, u8, u8, u16);
 
 #[derive(Debug, Clone, BorshDeserialize)]
 #[allow(dead_code)]
@@ -328,201 +330,90 @@ struct RoutePlanStepV2 {
     output_index: u8,
 }
 
+// The ten route variants share three wire layouts. `deser` ignores trailing
+// bytes, and `shared_accounts_*` only prefixes a `u8` id, so one struct per
+// layout covers them all. Exact-out variants put an out_amount where exact-in
+// puts in_amount — same width, different meaning (see `RouteShape::exact_in`).
+
+/// route / exact_out_route (+ their `shared_accounts_*` forms).
 #[derive(BorshDeserialize)]
-struct RouteArgs {
+struct V1Args {
     route_plan: Vec<RoutePlanStep>,
-    in_amount: u64,
+    amount: u64,
     #[allow(dead_code)]
-    quoted_out_amount: u64,
+    quoted_amount: u64,
     #[allow(dead_code)]
     slippage_bps: u16,
-    #[allow(dead_code)]
     platform_fee_bps: u8,
 }
 
+/// `*_with_token_ledger`: the amount comes from the ledger, not the args.
 #[derive(BorshDeserialize)]
-struct RouteWithTokenLedgerArgs {
+struct V1LedgerArgs {
     route_plan: Vec<RoutePlanStep>,
     #[allow(dead_code)]
-    quoted_out_amount: u64,
+    quoted_amount: u64,
     #[allow(dead_code)]
     slippage_bps: u16,
-    #[allow(dead_code)]
     platform_fee_bps: u8,
 }
 
+/// All four v2 variants: fixed prefix, `route_plan` last.
 #[derive(BorshDeserialize)]
-struct ExactOutRouteArgs {
-    route_plan: Vec<RoutePlanStep>,
+struct V2Args {
+    amount: u64,
     #[allow(dead_code)]
-    out_amount: u64,
-    #[allow(dead_code)]
-    quoted_in_amount: u64,
+    quoted_amount: u64,
     #[allow(dead_code)]
     slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u8,
-}
-
-#[derive(BorshDeserialize)]
-struct SharedAccountsRouteArgs {
-    #[allow(dead_code)]
-    id: u8,
-    route_plan: Vec<RoutePlanStep>,
-    in_amount: u64,
-    #[allow(dead_code)]
-    quoted_out_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u8,
-}
-
-#[derive(BorshDeserialize)]
-struct SharedAccountsExactOutRouteArgs {
-    #[allow(dead_code)]
-    id: u8,
-    route_plan: Vec<RoutePlanStep>,
-    #[allow(dead_code)]
-    out_amount: u64,
-    #[allow(dead_code)]
-    quoted_in_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u8,
-}
-
-#[derive(BorshDeserialize)]
-struct SharedAccountsRouteWithTokenLedgerArgs {
-    #[allow(dead_code)]
-    id: u8,
-    route_plan: Vec<RoutePlanStep>,
-    #[allow(dead_code)]
-    quoted_out_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u8,
-}
-
-#[derive(BorshDeserialize)]
-struct RouteV2Args {
-    in_amount: u64,
-    #[allow(dead_code)]
-    quoted_out_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
     platform_fee_bps: u16,
     #[allow(dead_code)]
     positive_slippage_bps: u16,
     route_plan: Vec<RoutePlanStepV2>,
 }
 
-#[derive(BorshDeserialize)]
-struct ExactOutRouteV2Args {
-    #[allow(dead_code)]
-    out_amount: u64,
-    #[allow(dead_code)]
-    quoted_in_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u16,
-    #[allow(dead_code)]
-    positive_slippage_bps: u16,
-    route_plan: Vec<RoutePlanStepV2>,
+/// Which wire layout a route discriminator uses.
+#[derive(Clone, Copy)]
+struct RouteShape {
+    /// `shared_accounts_*` prefixes the args with a `u8` id.
+    id_prefix: bool,
+    /// v2 layout ([`V2Args`]) rather than v1.
+    v2: bool,
+    /// `*_with_token_ledger` ([`V1LedgerArgs`]); never set for v2.
+    ledger: bool,
+    /// The leading amount is the route's *input*. Exact-out variants carry an
+    /// out_amount there instead, which says nothing about the input.
+    exact_in: bool,
 }
 
-#[derive(BorshDeserialize)]
-struct SharedAccountsRouteV2Args {
-    #[allow(dead_code)]
-    id: u8,
-    in_amount: u64,
-    #[allow(dead_code)]
-    quoted_out_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u16,
-    #[allow(dead_code)]
-    positive_slippage_bps: u16,
-    route_plan: Vec<RoutePlanStepV2>,
+fn route_shape(disc: [u8; 8]) -> Option<RouteShape> {
+    let (id_prefix, v2, ledger, exact_in) = match disc {
+        ROUTE => (false, false, false, true),
+        EXACT_OUT_ROUTE => (false, false, false, false),
+        ROUTE_WITH_TOKEN_LEDGER => (false, false, true, false),
+        SHARED_ACCOUNTS_ROUTE => (true, false, false, true),
+        SHARED_ACCOUNTS_EXACT_OUT_ROUTE => (true, false, false, false),
+        SHARED_ACCOUNTS_ROUTE_WITH_TOKEN_LEDGER => (true, false, true, false),
+        ROUTE_V2 => (false, true, false, true),
+        EXACT_OUT_ROUTE_V2 => (false, true, false, false),
+        SHARED_ACCOUNTS_ROUTE_V2 => (true, true, false, true),
+        SHARED_ACCOUNTS_EXACT_OUT_ROUTE_V2 => (true, true, false, false),
+        _ => return None,
+    };
+    Some(RouteShape {
+        id_prefix,
+        v2,
+        ledger,
+        exact_in,
+    })
 }
 
-#[derive(BorshDeserialize)]
-struct SharedAccountsExactOutRouteV2Args {
-    #[allow(dead_code)]
-    id: u8,
-    #[allow(dead_code)]
-    out_amount: u64,
-    #[allow(dead_code)]
-    quoted_in_amount: u64,
-    #[allow(dead_code)]
-    slippage_bps: u16,
-    #[allow(dead_code)]
-    platform_fee_bps: u16,
-    #[allow(dead_code)]
-    positive_slippage_bps: u16,
-    route_plan: Vec<RoutePlanStepV2>,
-}
-
-/// `total_steps == Some(1)` means the RFQ leg is the only step in the
-/// route. `None` only when the byte-scan fallback ran and couldn't recover
-/// the count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct JupiterRfqStepInfo {
-    pub input_index: u8,
-    pub output_index: u8,
-    pub total_steps: Option<u32>,
-}
-
-/// Position of `(source_mint, destination_mint)` within a Jupiter route
-/// instruction's account list, for variants where those mints sit at
-/// fixed positions (no preceding optional accounts).
-pub fn route_mint_positions(disc: &[u8; 8]) -> Option<(usize, usize)> {
-    match *disc {
-        // route_v2 layout:
-        //   0 user_transfer_authority
-        //   1 user_source_token_account
-        //   2 user_destination_token_account
-        //   3 source_mint        ←
-        //   4 destination_mint   ←
-        //   5 source_token_program
-        //   6 destination_token_program
-        //   7 destination_token_account (optional, trailing)
-        //   8 event_authority
-        //   9 program
-        ROUTE_V2 | EXACT_OUT_ROUTE_V2 => Some((3, 4)),
-        // shared_accounts_route v1 layout:
-        //   0 token_program
-        //   1 program_authority
-        //   2 user_transfer_authority
-        //   3 source_token_account
-        //   4 program_source_token_account
-        //   5 program_destination_token_account
-        //   6 destination_token_account
-        //   7 source_mint        ←
-        //   8 destination_mint   ←
-        //   9 platform_fee_account (optional, trailing)
-        //   ...
-        SHARED_ACCOUNTS_ROUTE
-        | SHARED_ACCOUNTS_EXACT_OUT_ROUTE
-        | SHARED_ACCOUNTS_ROUTE_WITH_TOKEN_LEDGER => Some((7, 8)),
-        // shared_accounts_route_v2 layout:
-        //   0 program_authority
-        //   1 user_transfer_authority
-        //   2 source_token_account
-        //   3 program_source_token_account
-        //   4 program_destination_token_account
-        //   5 destination_token_account
-        //   6 source_mint        ←
-        //   7 destination_mint   ←
-        //   ...
-        SHARED_ACCOUNTS_ROUTE_V2 | SHARED_ACCOUNTS_EXACT_OUT_ROUTE_V2 => Some((6, 7)),
-        _ => None,
-    }
+/// Split a route instruction into its shape and its Borsh args (past the
+/// discriminator and any `shared_accounts_*` id byte).
+fn split_route_args(data: &[u8]) -> Option<(RouteShape, &[u8])> {
+    let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
+    let shape = route_shape(disc)?;
+    Some((shape, data.get(8 + shape.id_prefix as usize..)?))
 }
 
 pub fn decode_jupiter_rfq_fill(data: &[u8]) -> Option<(FillExactInInstruction, FillAnalysis)> {
@@ -606,239 +497,37 @@ fn scan_via_tag_byte_full(data: &[u8]) -> Option<(FillExactInInstruction, FillAn
     None
 }
 
-pub fn decode_jupiter_rfq_step_indices(data: &[u8]) -> Option<JupiterRfqStepInfo> {
-    if let Some((steps, _, total)) = parse_route_steps(data) {
-        if let Some((_, _, in_idx, out_idx, _)) = steps.first() {
-            return Some(JupiterRfqStepInfo {
-                input_index: *in_idx,
-                output_index: *out_idx,
-                total_steps: Some(total),
-            });
-        }
-    }
-    let (input_index, output_index) = scan_jupiter_rfq_step_indices(data)?;
-    let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
-    Some(JupiterRfqStepInfo {
-        input_index,
-        output_index,
-        total_steps: read_route_plan_len(disc, data),
-    })
-}
-
 pub fn extract_platform_fee_bps(data: &[u8]) -> Option<u16> {
-    let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
-    let args = &data[8..];
-    let bps = match disc {
-        ROUTE => deser::<RouteArgs>(args)?.platform_fee_bps as u16,
-        ROUTE_WITH_TOKEN_LEDGER => deser::<RouteWithTokenLedgerArgs>(args)?.platform_fee_bps as u16,
-        EXACT_OUT_ROUTE => deser::<ExactOutRouteArgs>(args)?.platform_fee_bps as u16,
-        SHARED_ACCOUNTS_ROUTE => deser::<SharedAccountsRouteArgs>(args)?.platform_fee_bps as u16,
-        SHARED_ACCOUNTS_EXACT_OUT_ROUTE => {
-            deser::<SharedAccountsExactOutRouteArgs>(args)?.platform_fee_bps as u16
-        }
-        SHARED_ACCOUNTS_ROUTE_WITH_TOKEN_LEDGER => {
-            deser::<SharedAccountsRouteWithTokenLedgerArgs>(args)?.platform_fee_bps as u16
-        }
-        ROUTE_V2 => deser::<RouteV2Args>(args)?.platform_fee_bps,
-        EXACT_OUT_ROUTE_V2 => deser::<ExactOutRouteV2Args>(args)?.platform_fee_bps,
-        SHARED_ACCOUNTS_ROUTE_V2 => deser::<SharedAccountsRouteV2Args>(args)?.platform_fee_bps,
-        SHARED_ACCOUNTS_EXACT_OUT_ROUTE_V2 => {
-            deser::<SharedAccountsExactOutRouteV2Args>(args)?.platform_fee_bps
-        }
-        _ => return None,
-    };
-    Some(bps)
-}
-
-fn parse_route_steps(
-    data: &[u8],
-) -> Option<(Vec<(JupSide, Vec<u8>, u8, u8, u16)>, Option<u64>, u32)> {
-    let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
-    let args = &data[8..];
-    Some(match disc {
-        ROUTE => {
-            let a = deser::<RouteArgs>(args)?;
-            let total = a.route_plan.len() as u32;
-            (
-                extract_rfq_steps_v1(&a.route_plan),
-                Some(a.in_amount),
-                total,
-            )
-        }
-        ROUTE_WITH_TOKEN_LEDGER => {
-            let a = deser::<RouteWithTokenLedgerArgs>(args)?;
-            let total = a.route_plan.len() as u32;
-            (extract_rfq_steps_v1(&a.route_plan), None, total)
-        }
-        EXACT_OUT_ROUTE => {
-            let a = deser::<ExactOutRouteArgs>(args)?;
-            let total = a.route_plan.len() as u32;
-            (extract_rfq_steps_v1(&a.route_plan), None, total)
-        }
-        SHARED_ACCOUNTS_ROUTE => {
-            let a = deser::<SharedAccountsRouteArgs>(args)?;
-            let total = a.route_plan.len() as u32;
-            (
-                extract_rfq_steps_v1(&a.route_plan),
-                Some(a.in_amount),
-                total,
-            )
-        }
-        SHARED_ACCOUNTS_EXACT_OUT_ROUTE => {
-            let a = deser::<SharedAccountsExactOutRouteArgs>(args)?;
-            let total = a.route_plan.len() as u32;
-            (extract_rfq_steps_v1(&a.route_plan), None, total)
-        }
-        SHARED_ACCOUNTS_ROUTE_WITH_TOKEN_LEDGER => {
-            let a = deser::<SharedAccountsRouteWithTokenLedgerArgs>(args)?;
-            let total = a.route_plan.len() as u32;
-            (extract_rfq_steps_v1(&a.route_plan), None, total)
-        }
-        ROUTE_V2 => {
-            let a = deser::<RouteV2Args>(args)?;
-            let total = a.route_plan.len() as u32;
-            (
-                extract_rfq_steps_v2(&a.route_plan),
-                Some(a.in_amount),
-                total,
-            )
-        }
-        EXACT_OUT_ROUTE_V2 => {
-            let a = deser::<ExactOutRouteV2Args>(args)?;
-            let total = a.route_plan.len() as u32;
-            (extract_rfq_steps_v2(&a.route_plan), None, total)
-        }
-        SHARED_ACCOUNTS_ROUTE_V2 => {
-            let a = deser::<SharedAccountsRouteV2Args>(args)?;
-            let total = a.route_plan.len() as u32;
-            (
-                extract_rfq_steps_v2(&a.route_plan),
-                Some(a.in_amount),
-                total,
-            )
-        }
-        SHARED_ACCOUNTS_EXACT_OUT_ROUTE_V2 => {
-            let a = deser::<SharedAccountsExactOutRouteV2Args>(args)?;
-            let total = a.route_plan.len() as u32;
-            (extract_rfq_steps_v2(&a.route_plan), None, total)
-        }
-        _ => return None,
+    let (shape, args) = split_route_args(data)?;
+    Some(if shape.v2 {
+        deser::<V2Args>(args)?.platform_fee_bps
+    } else if shape.ledger {
+        deser::<V1LedgerArgs>(args)?.platform_fee_bps as u16
+    } else {
+        deser::<V1Args>(args)?.platform_fee_bps as u16
     })
 }
 
-// v1: route_plan first in args (+0, or +1 after `id` for shared_*).
-// v2: route_plan after a 22-byte fixed prefix (+22, or +23 after `id`).
-fn read_route_plan_len(disc: [u8; 8], data: &[u8]) -> Option<u32> {
-    let offset: usize = match disc {
-        ROUTE | ROUTE_WITH_TOKEN_LEDGER | EXACT_OUT_ROUTE => 8,
-        SHARED_ACCOUNTS_ROUTE
-        | SHARED_ACCOUNTS_EXACT_OUT_ROUTE
-        | SHARED_ACCOUNTS_ROUTE_WITH_TOKEN_LEDGER => 9,
-        ROUTE_V2 | EXACT_OUT_ROUTE_V2 => 8 + 22,
-        SHARED_ACCOUNTS_ROUTE_V2 | SHARED_ACCOUNTS_EXACT_OUT_ROUTE_V2 => 9 + 22,
-        _ => return None,
+fn parse_route_steps(data: &[u8]) -> Option<(Vec<RfqStep>, Option<u64>, u32)> {
+    let (shape, args) = split_route_args(data)?;
+    let (steps, amount, total) = if shape.v2 {
+        let a = deser::<V2Args>(args)?;
+        let total = a.route_plan.len() as u32;
+        (extract_rfq_steps_v2(&a.route_plan), Some(a.amount), total)
+    } else if shape.ledger {
+        let a = deser::<V1LedgerArgs>(args)?;
+        let total = a.route_plan.len() as u32;
+        (extract_rfq_steps_v1(&a.route_plan), None, total)
+    } else {
+        let a = deser::<V1Args>(args)?;
+        let total = a.route_plan.len() as u32;
+        (extract_rfq_steps_v1(&a.route_plan), Some(a.amount), total)
     };
-    let bytes: [u8; 4] = data.get(offset..offset + 4)?.try_into().ok()?;
-    Some(u32::from_le_bytes(bytes))
+    // Only an exact-in route's leading amount is the route input.
+    Some((steps, amount.filter(|_| shape.exact_in), total))
 }
 
-fn scan_jupiter_rfq_step_indices(data: &[u8]) -> Option<(u8, u8)> {
-    scan_via_fill_disc(data).or_else(|| scan_via_tag_byte(data))
-}
-
-// Anchor at FILL_EXACT_IN_DISCRIMINATOR; walk backwards/forwards:
-//   [tag=120][side u8][fill_data_len u32][FILL_DISC ...fill_data][bps u16][in u8][out u8]
-//   ↑ P-6   ↑ P-5    ↑ P-4..P-1         ↑ P                     ↑ P+L    ↑ P+L+2 ↑ P+L+3
-fn scan_via_fill_disc(data: &[u8]) -> Option<(u8, u8)> {
-    if data.len() < FILL_EXACT_IN_DISCRIMINATOR.len() + 6 {
-        return None;
-    }
-    for p in 6..data.len().saturating_sub(FILL_EXACT_IN_DISCRIMINATOR.len()) {
-        if data[p..p + 8] != FILL_EXACT_IN_DISCRIMINATOR {
-            continue;
-        }
-        let fill_data_len =
-            u32::from_le_bytes([data[p - 4], data[p - 3], data[p - 2], data[p - 1]]) as usize;
-        if !(8..=1024).contains(&fill_data_len) {
-            continue;
-        }
-        let side = data[p - 5];
-        if side > 1 {
-            continue;
-        }
-        if data[p - 6] != 120 {
-            continue;
-        }
-        let fill_data_end = p + fill_data_len;
-        if fill_data_end + 4 > data.len() {
-            continue;
-        }
-        let fill_data = &data[p..fill_data_end];
-        let jup_side = if side == 0 {
-            JupSide::Bid
-        } else {
-            JupSide::Ask
-        };
-        if try_decode_rfq_fill(&jup_side, fill_data, None).is_none() {
-            continue;
-        }
-        return Some((data[fill_data_end + 2], data[fill_data_end + 3]));
-    }
-    None
-}
-
-// 0x78 occurs by chance; validate each candidate by decoding fill_data.
-// Tries common in_amount offsets for the params-only fill_data layout.
-fn scan_via_tag_byte(data: &[u8]) -> Option<(u8, u8)> {
-    const JUPITER_RFQ_V2_TAG: u8 = 120;
-    let in_amount_hints: [Option<u64>; 3] = [
-        None,
-        data.get(8..16)
-            .and_then(|s| s.try_into().ok())
-            .map(u64::from_le_bytes),
-        data.get(9..17)
-            .and_then(|s| s.try_into().ok())
-            .map(u64::from_le_bytes),
-    ];
-
-    for i in 0..data.len() {
-        if data[i] != JUPITER_RFQ_V2_TAG {
-            continue;
-        }
-        if i + 6 > data.len() {
-            break;
-        }
-        let side = data[i + 1];
-        if side > 1 {
-            continue;
-        }
-        let fill_data_len =
-            u32::from_le_bytes([data[i + 2], data[i + 3], data[i + 4], data[i + 5]]) as usize;
-        if !(16..=1024).contains(&fill_data_len) {
-            continue;
-        }
-        let fill_data_end = i + 6 + fill_data_len;
-        if fill_data_end + 4 > data.len() {
-            continue;
-        }
-        let fill_data = &data[i + 6..fill_data_end];
-        let jup_side = if side == 0 {
-            JupSide::Bid
-        } else {
-            JupSide::Ask
-        };
-        let decoded = in_amount_hints
-            .iter()
-            .any(|hint| try_decode_rfq_fill(&jup_side, fill_data, *hint).is_some());
-        if !decoded {
-            continue;
-        }
-        return Some((data[fill_data_end + 2], data[fill_data_end + 3]));
-    }
-    None
-}
-
-fn extract_rfq_steps_v1(plan: &[RoutePlanStep]) -> Vec<(JupSide, Vec<u8>, u8, u8, u16)> {
+fn extract_rfq_steps_v1(plan: &[RoutePlanStep]) -> Vec<RfqStep> {
     plan.iter()
         .filter_map(|step| match &step.swap {
             Swap::JupiterRfqV2 { side, fill_data } => Some((
@@ -853,7 +542,7 @@ fn extract_rfq_steps_v1(plan: &[RoutePlanStep]) -> Vec<(JupSide, Vec<u8>, u8, u8
         .collect()
 }
 
-fn extract_rfq_steps_v2(plan: &[RoutePlanStepV2]) -> Vec<(JupSide, Vec<u8>, u8, u8, u16)> {
+fn extract_rfq_steps_v2(plan: &[RoutePlanStepV2]) -> Vec<RfqStep> {
     plan.iter()
         .filter_map(|step| match &step.swap {
             Swap::JupiterRfqV2 { side, fill_data } => Some((

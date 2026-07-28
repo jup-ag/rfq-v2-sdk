@@ -386,10 +386,24 @@ mod tests {
     #[tokio::test]
     async fn test_get_quotes_preserves_token_pair() {
         let mut client = setup_test_client().await;
-        let pair = TokenPair::eth_usdc();
+        const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+        let pair = TokenPair::new(
+            Token::new(
+                "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
+                8,
+                "ETH",
+                TOKEN_PROGRAM,
+            ),
+            Token::new(
+                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                6,
+                "USDC",
+                TOKEN_PROGRAM,
+            ),
+        );
 
         let resp = client
-            .get_quotes(pair.clone(), "test-token".to_string())
+            .get_quotes(pair, "test-token".to_string())
             .await
             .expect("get_quotes should succeed");
 
@@ -431,7 +445,7 @@ mod tests {
         assert!(stream.is_healthy(Duration::from_secs(30)).await);
 
         stream.close().await;
-        assert!(stream.is_closed().await);
+        assert!(stream.is_closed());
         assert!(
             stream.send(MarketMakerQuote::default()).await.is_err(),
             "sending on a closed stream must fail"

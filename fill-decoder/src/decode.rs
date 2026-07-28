@@ -45,12 +45,6 @@ pub(crate) fn read_u8(data: &[u8], offset: &mut usize) -> crate::Result<u8> {
     Ok(val)
 }
 
-fn read_pubkey(keys: &[[u8; 32]], index: usize) -> crate::Result<[u8; 32]> {
-    keys.get(index)
-        .copied()
-        .ok_or_else(|| FillDecoderError::other(format!("missing account at index {index}")))
-}
-
 /// Decode the `fill_exact_in` instruction from raw instruction data bytes.
 pub fn decode_fill_instruction(data: &[u8]) -> crate::Result<FillExactInInstruction> {
     if !is_fill_exact_in(data) {
@@ -74,17 +68,18 @@ pub fn decode_fill_accounts(account_keys: &[[u8; 32]]) -> crate::Result<FillAcco
         )));
     }
 
+    // The length check above guarantees indices 0..=10.
     Ok(FillAccounts {
-        user: read_pubkey(account_keys, 0)?,
-        fill_authority: read_pubkey(account_keys, 1)?,
-        user_base_token_account: read_pubkey(account_keys, 2)?,
-        user_quote_token_account: read_pubkey(account_keys, 3)?,
-        maker_base_token_account: read_pubkey(account_keys, 4)?,
-        maker_quote_token_account: read_pubkey(account_keys, 5)?,
-        base_mint: read_pubkey(account_keys, 6)?,
-        quote_mint: read_pubkey(account_keys, 7)?,
-        base_token_program: read_pubkey(account_keys, 8)?,
-        quote_token_program: read_pubkey(account_keys, 9)?,
-        instructions_sysvar: read_pubkey(account_keys, 10)?,
+        user: account_keys[0],
+        fill_authority: account_keys[1],
+        user_base_token_account: account_keys[2],
+        user_quote_token_account: account_keys[3],
+        maker_base_token_account: account_keys[4],
+        maker_quote_token_account: account_keys[5],
+        base_mint: account_keys[6],
+        quote_mint: account_keys[7],
+        base_token_program: account_keys[8],
+        quote_token_program: account_keys[9],
+        instructions_sysvar: account_keys[10],
     })
 }

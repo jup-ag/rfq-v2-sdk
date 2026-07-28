@@ -26,13 +26,7 @@ pub use analysis::analyze_fill;
 
 pub use scanner::scan_for_embedded_fill;
 
-pub use aggregator::{
-    decode_jupiter_rfq_fill, decode_jupiter_rfq_step_indices, extract_platform_fee_bps,
-    route_mint_positions, JupiterRfqStepInfo, AGGREGATOR_IDL_JSON, JUPITER_PROGRAM_ID,
-};
-
-/// The Anchor IDL for the RFQ v2 program, embedded at compile time.
-pub const IDL_JSON: &str = include_str!("../idls/rfq_v2.json");
+pub use aggregator::{decode_jupiter_rfq_fill, extract_platform_fee_bps, JUPITER_PROGRAM_ID};
 
 pub use transaction::{
     decode_message_base64, decode_transaction_base64, decode_transaction_bytes, AddressTableLookup,
@@ -40,9 +34,7 @@ pub use transaction::{
     ResolvedAccount,
 };
 
-pub use validation::{
-    all_exclusive, check_fill_exclusivity, check_fill_exclusivity_multi, ExclusivityReport,
-};
+pub use validation::{check_fill_exclusivity, check_fill_exclusivity_multi, ExclusivityReport};
 
 pub use lookups::{parse_lookup_table_addresses, resolve_address_lookups, LookupTableMap};
 
@@ -370,10 +362,11 @@ mod tests {
         assert!(report.is_exclusive(), "fill_authority: {}", report);
 
         // Convenience: check all at once.
-        assert!(all_exclusive(
-            msg,
-            &[maker_base, maker_quote, fill_authority]
-        ));
+        assert!(
+            check_fill_exclusivity_multi(msg, &[maker_base, maker_quote, fill_authority])
+                .iter()
+                .all(|r| r.is_exclusive())
+        );
     }
 
     #[test]
@@ -419,22 +412,6 @@ mod tests {
         let m = FillMints::from_base_quote("BASE".into(), "QUOTE".into(), Side::Ask);
         assert_eq!(m.input_mint, "BASE");
         assert_eq!(m.output_mint, "QUOTE");
-        assert_eq!(m.base_mint, "BASE");
-        assert_eq!(m.quote_mint, "QUOTE");
-    }
-
-    #[test]
-    fn test_fill_mints_from_input_output_bid() {
-        // Bid: input=quote, output=base → derive base/quote
-        let m = FillMints::from_input_output("QUOTE".into(), "BASE".into(), Side::Bid);
-        assert_eq!(m.base_mint, "BASE");
-        assert_eq!(m.quote_mint, "QUOTE");
-    }
-
-    #[test]
-    fn test_fill_mints_from_input_output_ask() {
-        // Ask: input=base, output=quote → derive base/quote
-        let m = FillMints::from_input_output("BASE".into(), "QUOTE".into(), Side::Ask);
         assert_eq!(m.base_mint, "BASE");
         assert_eq!(m.quote_mint, "QUOTE");
     }

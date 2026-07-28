@@ -71,24 +71,6 @@ impl TokenPair {
         }
     }
 
-    /// ETH/USDC token pair on mainnet
-    pub fn eth_usdc() -> Self {
-        Self {
-            base_token: Token {
-                address: "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs".to_string(),
-                decimals: 8,
-                symbol: "ETH".to_string(),
-                owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
-            },
-            quote_token: Token {
-                address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".to_string(),
-                decimals: 6,
-                symbol: "USDC".to_string(),
-                owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
-            },
-        }
-    }
-
     /// Create a custom token pair
     pub fn new(base_token: Token, quote_token: Token) -> Self {
         Self {

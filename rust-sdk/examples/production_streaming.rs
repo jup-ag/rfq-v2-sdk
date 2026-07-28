@@ -380,9 +380,7 @@ async fn run_swap_stream(
     );
 
     // Close stream
-    if let Err(e) = swap_stream.close_with_timeout(Duration::from_secs(5)).await {
-        warn!("Swap stream close error: {}", e);
-    }
+    swap_stream.close().await;
 
     Ok(())
 }
@@ -643,9 +641,7 @@ async fn run_quote_stream(
     );
 
     // Close stream
-    if let Err(e) = stream.close_with_timeout(Duration::from_secs(5)).await {
-        warn!("Stream close error: {}", e);
-    }
+    stream.close().await;
 
     Ok(())
 }

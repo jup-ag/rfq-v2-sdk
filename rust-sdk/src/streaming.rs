@@ -6,6 +6,7 @@
 
 use crate::error::{MarketMakerError, Result};
 use crate::types::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
@@ -18,7 +19,7 @@ pub struct StreamHandle<Out, In> {
     /// Direct gRPC stream of incoming updates from the server
     pub update_receiver: Streaming<In>,
     stats: Arc<Mutex<ConnectionStats>>,
-    is_closed: Arc<Mutex<bool>>,
+    is_closed: Arc<AtomicBool>,
 }
 
 /// Stream of outbound [`MarketMakerQuote`]s and inbound [`QuoteUpdate`]s
@@ -32,14 +33,14 @@ impl<Out, In> StreamHandle<Out, In> {
         Self {
             sender,
             update_receiver,
-            stats: Arc::new(Mutex::new(ConnectionStats::new())),
-            is_closed: Arc::new(Mutex::new(false)),
+            stats: Arc::new(Mutex::new(ConnectionStats::default())),
+            is_closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Send a message to the gRPC server
     pub async fn send(&self, msg: Out) -> Result<()> {
-        if *self.is_closed.lock().await {
+        if self.is_closed() {
             return Err(MarketMakerError::streaming("Stream has been closed"));
         }
 
@@ -55,7 +56,7 @@ impl<Out, In> StreamHandle<Out, In> {
     ///
     /// `Ok(None)` means the server closed the stream.
     pub async fn receive_update(&mut self) -> Result<Option<In>> {
-        if *self.is_closed.lock().await {
+        if self.is_closed() {
             return Ok(None);
         }
 
@@ -66,7 +67,7 @@ impl<Out, In> StreamHandle<Out, In> {
             }
             Ok(None) => {
                 // Stream ended normally - mark as closed
-                *self.is_closed.lock().await = true;
+                self.is_closed.store(true, Ordering::Relaxed);
                 Ok(None)
             }
             Err(e) => {
@@ -98,7 +99,7 @@ impl<Out, In> StreamHandle<Out, In> {
         tracing::info!("Initiating graceful stream shutdown");
 
         // Mark as closed first to prevent new operations
-        *self.is_closed.lock().await = true;
+        self.is_closed.store(true, Ordering::Relaxed);
 
         // Close the outbound half by dropping the sender
         drop(std::mem::replace(
@@ -112,20 +113,9 @@ impl<Out, In> StreamHandle<Out, In> {
         tracing::info!("Stream shutdown completed");
     }
 
-    /// Close the stream, giving up after `timeout`
-    pub async fn close_with_timeout(&mut self, timeout: Duration) -> Result<()> {
-        if tokio::time::timeout(timeout, self.close()).await.is_err() {
-            tracing::warn!("Stream close timed out after {:?}", timeout);
-            // Force close by marking as closed
-            *self.is_closed.lock().await = true;
-            return Err(MarketMakerError::timeout("Stream close operation timed out"));
-        }
-        Ok(())
-    }
-
     /// Whether the stream is closed
-    pub async fn is_closed(&self) -> bool {
-        *self.is_closed.lock().await || self.sender.is_closed()
+    pub fn is_closed(&self) -> bool {
+        self.is_closed.load(Ordering::Relaxed) || self.sender.is_closed()
     }
 
     /// Snapshot of the connection statistics
@@ -144,8 +134,8 @@ pub struct ConnectionStats {
     pub last_activity: Option<Instant>,
 }
 
-impl ConnectionStats {
-    pub fn new() -> Self {
+impl Default for ConnectionStats {
+    fn default() -> Self {
         Self {
             messages_sent: 0,
             updates_received: 0,
@@ -154,7 +144,9 @@ impl ConnectionStats {
             last_activity: None,
         }
     }
+}
 
+impl ConnectionStats {
     fn message_sent(&mut self) {
         self.messages_sent += 1;
         self.last_activity = Some(Instant::now());
@@ -172,11 +164,5 @@ impl ConnectionStats {
     /// Time since the last successful send or receive
     pub fn time_since_last_activity(&self) -> Option<Duration> {
         self.last_activity.map(|instant| instant.elapsed())
-    }
-}
-
-impl Default for ConnectionStats {
-    fn default() -> Self {
-        Self::new()
     }
 }
