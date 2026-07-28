@@ -1,10 +1,7 @@
 """Builder patterns for creating RFQv2 quotes and requests.
 
-Mirrors ``rust-sdk/src/builders.rs``. The primary entry point is
-:class:`MarketMakerQuoteBuilder` (also exported as :class:`QuoteBuilder`
-for backward compatibility). The Rust SDK exposes ``MarketMakerQuote::builder()``
-— in Python this is :func:`market_maker_quote_builder` or you can call
-:meth:`MarketMakerQuoteBuilder.new` directly.
+The primary entry point is :class:`MarketMakerQuoteBuilder` — construct it
+directly and chain setters, ending in :meth:`~MarketMakerQuoteBuilder.build`.
 """
 
 from datetime import datetime, timezone
@@ -27,9 +24,8 @@ DEFAULT_QUOTE_EXPIRY_SECS: int = 30
 class MarketMakerQuoteBuilder:
     """Builder for creating :class:`MarketMakerQuote` instances.
 
-    Mirrors the Rust ``MarketMakerQuoteBuilder``. All setter methods return
-    ``self`` for fluent chaining, ending in :meth:`build` which validates the
-    quote and returns the protobuf message.
+    All setter methods return ``self`` for fluent chaining, ending in
+    :meth:`build` which validates the quote and returns the protobuf message.
     """
 
     def __init__(self) -> None:
@@ -48,16 +44,8 @@ class MarketMakerQuoteBuilder:
     # Constructors
     # ------------------------------------------------------------------ #
     @classmethod
-    def new(cls) -> "MarketMakerQuoteBuilder":
-        """Create a new builder."""
-        return cls()
-
-    @classmethod
     def from_quote(cls, quote: MarketMakerQuote) -> "MarketMakerQuoteBuilder":
-        """Create a builder seeded with values from an existing quote.
-
-        Mirrors the Rust ``MarketMakerQuoteBuilderExt::to_builder`` method.
-        """
+        """Create a builder seeded with values from an existing quote."""
         b = cls()
         b._maker_id = quote.maker_id
         b._cluster = quote.cluster
@@ -72,7 +60,7 @@ class MarketMakerQuoteBuilder:
         return b
 
     # ------------------------------------------------------------------ #
-    # Setters (mirror Rust method names)
+    # Setters
     # ------------------------------------------------------------------ #
     def maker_id(self, maker_id: str) -> "MarketMakerQuoteBuilder":
         """Set the maker ID."""
@@ -104,19 +92,9 @@ class MarketMakerQuoteBuilder:
         self._bid_levels.append(PriceLevel(volume=volume, price=price))
         return self
 
-    def bid_levels(self, levels: List[PriceLevel]) -> "MarketMakerQuoteBuilder":
-        """Append multiple bid levels."""
-        self._bid_levels.extend(levels)
-        return self
-
     def ask_level(self, volume: int, price: int) -> "MarketMakerQuoteBuilder":
         """Add a single ask level."""
         self._ask_levels.append(PriceLevel(volume=volume, price=price))
-        return self
-
-    def ask_levels(self, levels: List[PriceLevel]) -> "MarketMakerQuoteBuilder":
-        """Append multiple ask levels."""
-        self._ask_levels.extend(levels)
         return self
 
     def expiry_time_secs(self, secs: int) -> "MarketMakerQuoteBuilder":
@@ -192,18 +170,7 @@ class MarketMakerQuoteBuilder:
         )
 
 
-# Backward compatible alias — older code uses ``QuoteBuilder``.
-QuoteBuilder = MarketMakerQuoteBuilder
-
-
-def market_maker_quote_builder() -> MarketMakerQuoteBuilder:
-    """Convenience function mirroring Rust's ``MarketMakerQuote::builder()``."""
-    return MarketMakerQuoteBuilder.new()
-
-
 __all__ = [
     "DEFAULT_QUOTE_EXPIRY_SECS",
     "MarketMakerQuoteBuilder",
-    "QuoteBuilder",
-    "market_maker_quote_builder",
 ]

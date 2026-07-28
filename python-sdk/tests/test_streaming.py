@@ -5,7 +5,6 @@ the client sends a quote, the server echoes a NEW :class:`QuoteUpdate`, and
 the client receives it with stats updated correctly.
 """
 
-import asyncio
 import socket
 
 import grpc
@@ -60,7 +59,7 @@ async def echo_endpoint():
 
 def _quote(seq: int = 1):
     return (
-        MarketMakerQuoteBuilder.new()
+        MarketMakerQuoteBuilder()
         .maker_id("m")
         .sol_usdc_pair()
         .maker_address("a")
@@ -76,7 +75,7 @@ async def test_quote_stream_round_trip(echo_endpoint):
     client = await MarketMakerClient.connect(echo_endpoint)
     stream = await client.start_streaming()
     try:
-        await stream.send_quote(_quote())
+        await stream.send(_quote())
         update = await stream.receive_update_timeout(2.0)
         assert update is not None
         assert update_helpers.is_new_quote(update)
@@ -95,8 +94,8 @@ async def test_quote_stream_async_iterator(echo_endpoint):
     client = await MarketMakerClient.connect(echo_endpoint)
     stream = await client.start_streaming()
     try:
-        await stream.send_quote(_quote())
-        await stream.send_quote(_quote(seq=2))
+        await stream.send(_quote())
+        await stream.send(_quote(seq=2))
 
         seen = 0
         async for update in stream.updates():
@@ -115,7 +114,7 @@ async def test_swap_stream_ping_pong(echo_endpoint):
     client = await MarketMakerClient.connect(echo_endpoint)
     stream = await client.start_swap_streaming()
     try:
-        await stream.send_swap(
+        await stream.send(
             MarketMakerSwap(
                 message_type=SwapMessageType.SWAP_MESSAGE_TYPE_PING,
                 swap_uuid="",
@@ -135,7 +134,7 @@ async def test_swap_stream_submit_returns_confirmation(echo_endpoint):
     client = await MarketMakerClient.connect(echo_endpoint)
     stream = await client.start_swap_streaming()
     try:
-        await stream.send_swap(
+        await stream.send(
             MarketMakerSwap(
                 message_type=SwapMessageType.SWAP_MESSAGE_TYPE_SWAP_SUBMIT,
                 swap_uuid="abc-123",
@@ -161,6 +160,6 @@ async def test_send_after_close_raises(echo_endpoint):
     await stream.close()
     try:
         with pytest.raises(StreamingError):
-            await stream.send_quote(_quote())
+            await stream.send(_quote())
     finally:
         await client.close()

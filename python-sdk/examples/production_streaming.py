@@ -31,11 +31,13 @@ from rfq_sdk import (  # noqa: E402
     MarketMakerSwap,
     StreamConfig,
     SwapMessageType,
-    TokenHelper,
+    Token,
     TokenPair,
-    swap_helpers,
 )
-from rfq_sdk.streaming import update_helpers  # noqa: E402
+from rfq_sdk.streaming import (  # noqa: E402
+    swap_update_helpers as swap_helpers,
+    update_helpers,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,7 @@ async def run_swap_stream(swap_stream, keypair: Keypair, stream_config: StreamCo
                 signed_transaction="",
             )
             try:
-                await swap_stream.send_swap(ping)
+                await swap_stream.send(ping)
                 logger.info("Sent ping to server")
                 last_ping = now
             except Exception as exc:  # noqa: BLE001
@@ -296,7 +298,7 @@ async def run_swap_stream(swap_stream, keypair: Keypair, stream_config: StreamCo
                 signed_transaction=signed_tx,
             )
             try:
-                await swap_stream.send_swap(outbound)
+                await swap_stream.send(outbound)
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to send signed tx: %s", exc)
                 break
@@ -321,7 +323,7 @@ async def run_swap_stream(swap_stream, keypair: Keypair, stream_config: StreamCo
         final_stats.elapsed(),
     )
     try:
-        await swap_stream.close_with_timeout(5.0)
+        await swap_stream.close()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Swap stream close error: %s", exc)
 
@@ -351,17 +353,17 @@ def _build_volume_tiers(builder: MarketMakerQuoteBuilder, base_price: int) -> Tu
 
 def spl_token_usdc_pair() -> TokenPair:
     """Mirrors the Rust ``spl_token_usdc_pair`` helper."""
-    base = TokenHelper.new(
-        SolanaTokens.SPL_TOKEN,
-        SPL_TOKEN_DECIMALS,
-        "MCT",
-        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    base = Token(
+        address=SolanaTokens.SPL_TOKEN,
+        decimals=SPL_TOKEN_DECIMALS,
+        symbol="MCT",
+        owner="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     )
-    quote = TokenHelper.new(
-        SolanaTokens.USDC,
-        PRICE_DECIMALS,
-        "USDC",
-        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    quote = Token(
+        address=SolanaTokens.USDC,
+        decimals=PRICE_DECIMALS,
+        symbol="USDC",
+        owner="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     )
     return TokenPair(base_token=base, quote_token=quote)
 
@@ -439,7 +441,7 @@ async def run_quote_stream(
 
         # --- Quote 1: SOL/USDC ---
         builder = (
-            MarketMakerQuoteBuilder.new()
+            MarketMakerQuoteBuilder()
             .maker_id(maker_id)
             .sol_usdc_pair()
             .sequence_number(next_sequence)
@@ -451,7 +453,7 @@ async def run_quote_stream(
 
         try:
             sol_quote = builder.build()
-            await stream.send_quote(sol_quote)
+            await stream.send(sol_quote)
             logger.info(
                 "SOL/USDC  Quote #%d sent (seq: %d) - %d levels, $%s-$%s",
                 quote_counter + 1,
@@ -471,7 +473,7 @@ async def run_quote_stream(
 
         # --- Quote 2: SPL Token / USDC ---
         builder = (
-            MarketMakerQuoteBuilder.new()
+            MarketMakerQuoteBuilder()
             .maker_id(maker_id)
             .token_pair(spl_pair)
             .sequence_number(next_sequence)
@@ -483,7 +485,7 @@ async def run_quote_stream(
 
         try:
             spl_quote = builder.build()
-            await stream.send_quote(spl_quote)
+            await stream.send(spl_quote)
             logger.info(
                 "MCT/USDC  Quote #%d sent (seq: %d) - %d levels, $%s-$%s",
                 quote_counter + 1,
@@ -560,8 +562,6 @@ async def main() -> int:
 
     config = (
         ClientConfig(endpoint="https://rfq-mm-edge-grpc.raccoons.dev")
-        .with_timeout(30)
-        .with_max_retries(5)
         .with_auth_token(auth_token)
     )
 
@@ -581,7 +581,7 @@ async def main() -> int:
 
     logger.info("Starting quote streaming for maker: %s...", maker_id)
     try:
-        stream, next_sequence = await client.start_streaming_with_sync_and_config(
+        stream, next_sequence = await client.start_streaming_with_sync(
             maker_id, auth_token, stream_config
         )
     except Exception as exc:  # noqa: BLE001

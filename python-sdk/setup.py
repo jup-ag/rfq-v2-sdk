@@ -1,4 +1,7 @@
-"""Setup configuration for Jupiter RFQv2 SDK.
+"""Proto-generation build hooks for the Jupiter RFQv2 SDK.
+
+All packaging metadata lives in ``pyproject.toml``; this file exists only to
+regenerate the protobuf stubs at build time.
 
 The Python protobuf stubs (``src/protos/market_maker_pb2*.py``) are not
 checked into git — see ``.gitignore``. They are produced from
@@ -23,12 +26,19 @@ Run the generator manually any time::
 import sys
 from pathlib import Path
 
-from setuptools import find_packages, setup
+import setuptools
+from setuptools import setup
 from setuptools.command.build_py import build_py
 from setuptools.command.develop import develop
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+# PEP 621 metadata (``[project]`` in pyproject.toml) needs setuptools >= 61.
+# Older versions silently build a nameless, package-less 0.0.0 distribution
+# instead of failing, so refuse rather than mis-install.
+if tuple(int(p) for p in setuptools.__version__.split(".")[:2]) < (61, 0):
+    raise SystemExit(
+        f"setuptools>=61.0 is required to build this package "
+        f"(found {setuptools.__version__}); run `pip install -U setuptools`."
+    )
 
 
 def _try_generate_protos() -> None:
@@ -82,46 +92,4 @@ class Develop(develop):
         super().run()
 
 
-setup(
-    name="jupiter-rfq-sdk",
-    version="0.1.0",
-    author="Jupiter",
-    author_email="",
-    description="Python SDK for Jupiter RFQv2 integration via gRPC streaming",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    url="https://github.com/jup-ag/rfq-v2-sdk",
-    package_dir={"": "src"},
-    packages=find_packages(where="src"),
-    classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Developers",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-    ],
-    python_requires=">=3.8",
-    install_requires=[
-        "grpcio>=1.60.0",
-        "grpcio-tools>=1.60.0",
-        "grpcio-reflection>=1.60.0",
-        "protobuf>=4.25.0",
-        "solders>=0.18.0",
-        "base58>=2.1.1",
-    ],
-    extras_require={
-        "dev": [
-            "pytest>=7.0.0",
-            "pytest-asyncio>=0.21.0",
-            "black>=23.0.0",
-            "mypy>=1.0.0",
-            "pylint>=2.17.0",
-            "requests>=2.28.0",
-        ],
-    },
-    cmdclass={"build_py": BuildPy, "develop": Develop},
-)
+setup(cmdclass={"build_py": BuildPy, "develop": Develop})

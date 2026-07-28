@@ -1,8 +1,8 @@
 """Type definitions and helpers for the RFQv2 SDK.
 
-Mirrors ``rust-sdk/src/types.rs``: re-exports the generated protobuf types
-under stable names, defines :class:`ClientConfig` and helper APIs around
-:class:`TokenPair` / :class:`MarketMakerQuote`.
+Re-exports the generated protobuf types under stable names, defines
+:class:`ClientConfig` and helper APIs around :class:`TokenPair` /
+:class:`MarketMakerQuote`.
 """
 
 from dataclasses import dataclass
@@ -31,7 +31,7 @@ from protos.market_maker_pb2 import (  # re-exported for convenience
 )
 
 
-# --- Default constants (mirrors `lib.rs`) ----------------------------------
+# --- Default constants ------------------------------------------------------
 
 DEFAULT_TIMEOUT_SECS: int = 30
 """Default connection timeout in seconds."""
@@ -46,36 +46,10 @@ DEFAULT_ENDPOINT: str = "http://localhost:2408"
 
 @dataclass
 class ClientConfig:
-    """Configuration for connecting to the RFQv2 service.
-
-    Mirrors the Rust ``ClientConfig`` struct.
-    """
+    """Configuration for connecting to the RFQv2 service."""
 
     endpoint: str = DEFAULT_ENDPOINT
-    timeout_secs: int = DEFAULT_TIMEOUT_SECS
-    max_retries: int = 3
-    stream_buffer_size: int = DEFAULT_CHANNEL_BUFFER_SIZE
     auth_token: Optional[str] = None
-
-    @classmethod
-    def new(cls, endpoint: str) -> "ClientConfig":
-        """Create a new configuration with the specified endpoint."""
-        return cls(endpoint=endpoint)
-
-    @classmethod
-    def default(cls) -> "ClientConfig":
-        """Create a default configuration."""
-        return cls()
-
-    def with_timeout(self, timeout_secs: int) -> "ClientConfig":
-        """Set the connection timeout (returns ``self`` for chaining)."""
-        self.timeout_secs = timeout_secs
-        return self
-
-    def with_max_retries(self, max_retries: int) -> "ClientConfig":
-        """Set the maximum retry attempts (returns ``self`` for chaining)."""
-        self.max_retries = max_retries
-        return self
 
     def with_auth_token(self, auth_token: str) -> "ClientConfig":
         """Set the authentication token for API access (returns ``self``)."""
@@ -83,13 +57,10 @@ class ClientConfig:
         return self
 
 
-# --- TokenPair / Token / PriceLevel helpers --------------------------------
+# --- TokenPair helpers ------------------------------------------------------
 
 class TokenPairHelper:
-    """Static helpers for common :class:`TokenPair` instances and operations.
-
-    Mirrors the ``impl TokenPair`` block from the Rust SDK.
-    """
+    """Static helpers for common :class:`TokenPair` instances and operations."""
 
     @staticmethod
     def sol_usdc() -> TokenPair:
@@ -138,41 +109,10 @@ class TokenPairHelper:
         return f"{token_pair.base_token.symbol}/{token_pair.quote_token.symbol}"
 
 
-class TokenHelper:
-    """Static helpers for :class:`Token`. Mirrors ``impl Token``."""
-
-    @staticmethod
-    def new(address: str, decimals: int, symbol: str, owner: str) -> Token:
-        """Create a new token."""
-        return Token(address=address, decimals=decimals, symbol=symbol, owner=owner)
-
-
-class PriceLevelHelper:
-    """Static helpers for :class:`PriceLevel`. Mirrors ``impl PriceLevel``."""
-
-    @staticmethod
-    def new(volume: int, price: int) -> PriceLevel:
-        """Create a new price level."""
-        return PriceLevel(volume=volume, price=price)
-
-    @staticmethod
-    def volume(level: PriceLevel) -> int:
-        """Get volume as an int."""
-        return level.volume
-
-    @staticmethod
-    def price(level: PriceLevel) -> int:
-        """Get price as an int."""
-        return level.price
-
-
-# --- MarketMakerQuote helpers (mirrors `MarketMakerQuoteExt` trait) --------
+# --- MarketMakerQuote helpers -----------------------------------------------
 
 class QuoteHelper:
-    """Helper methods for working with :class:`MarketMakerQuote`.
-
-    Mirrors the Rust ``MarketMakerQuoteExt`` trait.
-    """
+    """Helper methods for working with :class:`MarketMakerQuote`."""
 
     @staticmethod
     def is_expired(quote: MarketMakerQuote) -> bool:
@@ -220,9 +160,7 @@ __all__ = [
     # Configuration
     "ClientConfig",
     # Helpers
-    "TokenHelper",
     "TokenPairHelper",
-    "PriceLevelHelper",
     "QuoteHelper",
     # Re-exported protobuf types
     "Cluster",

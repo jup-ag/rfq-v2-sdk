@@ -7,63 +7,19 @@ intentionally **not** committed to the repository. They are regenerated:
 * automatically by ``pip install`` (via ``setup.py`` ``build_py`` hook), or
 * manually via ``python scripts/generate_protos.py``.
 
-If the imports below fail with ``ModuleNotFoundError``, the stubs have not
-been generated yet — run the script above.
+This package exists to turn a missing-stubs ``ModuleNotFoundError`` into an
+actionable one. Import the names themselves from the generated modules, e.g.
+``from protos.market_maker_pb2 import MarketMakerQuote`` — importing either
+submodule runs this guard first.
 """
 
 try:
-    from .market_maker_pb2 import (
-        Cluster,
-        GetAllOrderbooksRequest,
-        GetAllOrderbooksResponse,
-        GetQuotesRequest,
-        GetQuotesResponse,
-        MarketMakerQuote,
-        MarketMakerSwap,
-        Orderbook,
-        PriceLevel,
-        QuoteResponse,
-        QuoteUpdate,
-        SequenceNumberRequest,
-        SequenceNumberResponse,
-        SwapMessageType,
-        SwapUpdate,
-        Token,
-        TokenPair,
-        UpdateType,
-    )
-    from .market_maker_pb2_grpc import (
-        MarketMakerIngestionServiceServicer,
-        MarketMakerIngestionServiceStub,
-        add_MarketMakerIngestionServiceServicer_to_server,
-    )
-except ModuleNotFoundError as exc:  # pragma: no cover - install-time error
+    from . import market_maker_pb2, market_maker_pb2_grpc  # noqa: F401
+except ImportError as exc:  # pragma: no cover - install-time error
+    # Absent submodules surface as ImportError ("cannot import name ... from
+    # partially initialized module"), not ModuleNotFoundError.
     raise ModuleNotFoundError(
         "Generated protobuf stubs are missing. Run "
         "`python scripts/generate_protos.py` from the python-sdk/ directory, "
         "or reinstall with `pip install .`."
     ) from exc
-
-__all__ = [
-    "Cluster",
-    "GetAllOrderbooksRequest",
-    "GetAllOrderbooksResponse",
-    "GetQuotesRequest",
-    "GetQuotesResponse",
-    "MarketMakerIngestionServiceServicer",
-    "MarketMakerIngestionServiceStub",
-    "MarketMakerQuote",
-    "MarketMakerSwap",
-    "Orderbook",
-    "PriceLevel",
-    "QuoteResponse",
-    "QuoteUpdate",
-    "SequenceNumberRequest",
-    "SequenceNumberResponse",
-    "SwapMessageType",
-    "SwapUpdate",
-    "Token",
-    "TokenPair",
-    "UpdateType",
-    "add_MarketMakerIngestionServiceServicer_to_server",
-]

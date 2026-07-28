@@ -6,7 +6,6 @@ Mirrors the inline ``#[cfg(test)] mod tests`` block in
 correctly.
 """
 
-import asyncio
 import socket
 
 import grpc

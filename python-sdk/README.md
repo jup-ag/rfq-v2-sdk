@@ -27,8 +27,6 @@ Self-contained scripts under [`examples/`](examples) — see the file headers
 for what each one does:
 
 - [`production_streaming.py`](examples/production_streaming.py)
-- [`reflection_cli.py`](examples/reflection_cli.py)
-- [`deploy_spl_token.py`](examples/deploy_spl_token.py)
 
 ```bash
 python examples/production_streaming.py
@@ -46,7 +44,7 @@ see [`tests/README.md`](tests/README.md).
 ## Requirements
 
 Python 3.8+. Dependencies (installed by `pip install .`): grpcio,
-grpcio-tools, grpcio-reflection, protobuf, solders, base58.
+grpcio-tools, protobuf, solders, base58.
 
 ## License
 
