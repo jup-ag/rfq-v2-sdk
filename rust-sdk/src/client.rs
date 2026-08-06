@@ -221,9 +221,9 @@ impl MarketMakerClient {
         cluster: Option<Cluster>,
     ) -> Result<GetAllOrderbooksResponse> {
         debug!("Getting all orderbooks");
-        let request = Request::new(GetAllOrderbooksRequest {
+        let request = self.add_auth_token(Request::new(GetAllOrderbooksRequest {
             cluster: cluster.map(|c| c as i32),
-        });
+        }))?;
 
         let response = self
             .inner
@@ -264,11 +264,19 @@ mod tests {
             unimplemented!()
         }
 
+        /// Mirrors the ingestion service: the endpoint is authenticated.
         async fn get_all_orderbooks(
             &self,
-            _req: Request<GetAllOrderbooksRequest>,
+            req: Request<GetAllOrderbooksRequest>,
         ) -> std::result::Result<Response<GetAllOrderbooksResponse>, Status> {
-            unimplemented!()
+            req.metadata()
+                .get("x-api-key")
+                .ok_or_else(|| Status::unauthenticated("Missing authentication token"))?;
+
+            Ok(Response::new(GetAllOrderbooksResponse {
+                orderbooks: vec![],
+                timestamp: 1_000_000,
+            }))
         }
 
         type StreamQuotesStream = ReceiverStream<std::result::Result<QuoteUpdate, Status>>;
@@ -344,6 +352,11 @@ mod tests {
 
     /// Spin up a mock gRPC server on a random port and return the client.
     async fn setup_test_client() -> MarketMakerClient {
+        setup_test_client_with_auth(None).await
+    }
+
+    /// Same, but with an optional auth token on the client config.
+    async fn setup_test_client_with_auth(auth_token: Option<&str>) -> MarketMakerClient {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -359,9 +372,32 @@ mod tests {
         // Give the server a moment to start
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        MarketMakerClient::connect(format!("http://{}", addr))
+        let mut config = ClientConfig::new(format!("http://{}", addr));
+        if let Some(auth_token) = auth_token {
+            config = config.with_auth_token(auth_token);
+        }
+
+        MarketMakerClient::connect_with_config(config)
             .await
             .expect("failed to connect to mock server")
+    }
+
+    #[tokio::test]
+    async fn test_get_all_orderbooks_sends_api_key() {
+        let mut client = setup_test_client_with_auth(Some("test-token")).await;
+        client
+            .get_all_orderbooks(Some(Cluster::Mainnet))
+            .await
+            .expect("get_all_orderbooks should send the x-api-key header");
+
+        let mut anonymous = setup_test_client_with_auth(None).await;
+        assert!(
+            anonymous
+                .get_all_orderbooks(Some(Cluster::Mainnet))
+                .await
+                .is_err(),
+            "server should reject a request with no x-api-key header"
+        );
     }
 
     #[tokio::test]
